@@ -26,26 +26,26 @@
  *   die data-skin="loki" hält, ist der Re-Assert in loki.js (Attribut-Observer
  *   auf document.documentElement). Ohne diesen JS-Teil ist dieses CSS tot.
  *
- * Farbschema: tiefes Smaragd/Teal (#1f9e7a). Markant, modern, ruhig.
+ * Farbschema: tiefes Smaragd/Teal (#F97316). Markant, modern, ruhig.
  * → Oliver kann die Hex-Werte hier jederzeit anpassen, ohne JS anzufassen.
  */
 
 /* ── Loki Skin · LIGHT ─────────────────────────────────────────────────── */
 :root[data-skin="loki"] {
-  --accent:           #1f9e7a;                  /* Active states, Links, Primary-Buttons */
-  --accent-hover:     #17795d;                  /* Hover (dunkler) */
-  --accent-bg:        rgba(31, 158, 122, 0.08); /* Soft getönter Hintergrund */
-  --accent-bg-strong: rgba(31, 158, 122, 0.16); /* Hervorgehobener Hintergrund */
-  --accent-text:      #136049;                  /* Text auf --accent-bg (dunkel, lesbar) */
+  --accent:           #F97316;                  /* Active states, Links, Primary-Buttons */
+  --accent-hover:     #EA580C;                  /* Hover (dunkler) */
+  --accent-bg:        rgba(249, 115, 22, 0.08); /* Soft getönter Hintergrund */
+  --accent-bg-strong: rgba(249, 115, 22, 0.16); /* Hervorgehobener Hintergrund */
+  --accent-text:      #C2410C;                  /* Text auf --accent-bg (dunkel, lesbar) */
 }
 
 /* ── Loki Skin · DARK (heller/saturierter für Kontrast auf dunklen Flächen) ─ */
 :root.dark[data-skin="loki"] {
-  --accent:           #2fc79b;
-  --accent-hover:     #4fd9b1;
-  --accent-bg:        rgba(47, 199, 155, 0.10);
-  --accent-bg-strong: rgba(47, 199, 155, 0.20);
-  --accent-text:      #5fe0bd;                  /* helle Akzentschrift auf dunklem Tint */
+  --accent:           #FB923C;
+  --accent-hover:     #FDBA74;
+  --accent-bg:        rgba(251, 146, 60, 0.12);
+  --accent-bg-strong: rgba(251, 146, 60, 0.22);
+  --accent-text:      #FDBA74;                  /* helle Akzentschrift auf dunklem Tint */
 }
 
 /*
@@ -71,9 +71,9 @@
  */
 :root[data-skin="loki"] #app-titlebar-gold stop:first-child,
 :root[data-skin="loki"] #hermes-gold stop:first-child {
-  stop-color: #3fd4a6 !important;
+  stop-color: #FB923C !important;
 }
 :root[data-skin="loki"] #app-titlebar-gold stop:last-child,
 :root[data-skin="loki"] #hermes-gold stop:last-child {
-  stop-color: #157a5d !important;
+  stop-color: #EA580C !important;
 }
