@@ -3,19 +3,22 @@
  * --------------------------------------------------------------------------
  * "Agentur am Tisch" — ein Team-Chat-Panel für Loki OS.
  *
- * Was es tut (V2 — Team-Chat statt Kanban-Board):
+ * Was es tut (V3 — Mission als Kanban-Triage-Task statt Solo-Chat):
  *   1. Eigener Nav-Eintrag "🐺 Loki Orchestrator" in der Rail + Sidebar-Nav.
  *   2. Mission-Eingabe: Textfeld + Orchestrator-Profil-Auswahl + "Mission starten"
- *      → POST /api/session/new → POST /api/chat/start. Der gewählte Agent (Mira)
- *      zerlegt die Mission selbst (via Kanban-Toolset). Antwort live via SSE.
+ *      → POST /api/kanban/tasks { title, body, triage:true }. Die Mission landet als
+ *      TRIAGE-TASK auf dem Board. Der Gateway zerlegt sie via auto_decompose (Mira =
+ *      global gesetztes orchestrator_profile) und verteilt Subtasks an die Worker —
+ *      das ist der bewiesene Delegations-Weg (kein Solo-Chat mit Mira mehr).
  *   3. CHAT-VERLAUF statt Board: Mira + Worker erscheinen als Bubbles mit
  *      Avatar(emoji)/Name/Farbe, chronologisch. Olivers Mission als eigene
- *      User-Bubble, Miras Live-Antwort als Mira-Bubble, Worker-Statuswechsel
- *      (running/done/blocked) als Worker-Bubbles. Artefakte (Bilder) inline.
+ *      User-Bubble, Worker-Statuswechsel (running/done/blocked) als Worker-Bubbles.
+ *      Artefakte (Bilder) inline.
  *   4. Der Team-Verlauf wird aus dem Kanban-Board abgeleitet: GET /api/kanban/board
  *      wird gegen einen gemerkten Task-State gediffed (seenTasks) → jede Änderung
  *      wird zu einer Chat-Bubble. Live via EventSource /api/kanban/events/stream
- *      (Fallback: Polling 5s).
+ *      (Fallback: Polling 5s). So erscheinen auch die per auto_decompose entstehenden
+ *      Subtasks als Worker-Bubbles.
  *   5. Dispatch-Button "Team loslegen": POST /api/kanban/dispatch + Sync.
  *   6. Robust gegen fehlende/abgeschaltete Endpoints (Kanban 404/503 → klare Meldung).
  *
@@ -38,9 +41,9 @@
  *     globaler window.fetch-Wrapper in index.html (sameOriginUnsafe → setzt
  *     X-Hermes-CSRF-Token) injiziert den Token in JEDEN same-origin-unsafe fetch — damit
  *     sind BEIDE callApi-Pfade abgedeckt. Nur bei aktivierter Auth relevant.
- *   - apperror-Payload hat KEIN 'error'-Feld: streaming.py:747 _provider_error_payload
- *     liefert {message,type,hint}, gateway_chat.py {label,type,message,hint}. Wir lesen
- *     message/label/details (error nur als Altfall).
+ *   - Mission-Endpoint VERIFIZIERT (api/kanban_bridge.py): POST /api/kanban/tasks
+ *     (:1164); Payload _create_task_payload (:306) { title<REQUIRED>, body, triage:true };
+ *     Antwort { task:{ id, title, status, ... } } (status wird 'triage').
  *   - showToast-Signatur VERIFIZIERT: showToast(msg, ms, type) (static/ui.js:4130) — type
  *     ist der 3. Parameter, ms (2.) ist die Auto-Dismiss-Dauer. Alle drei Lokyy-Extensions
  *     (loki-orchestrator, agent-importer, mcp-manager) verwenden jetzt dieselbe 3-arg-Form.
@@ -84,7 +87,7 @@
 
   // ── API-Wrapper: bevorzugt Host-api() (credentials:'include', static/workspace.js:1), sonst fetch. ──
   // Wichtig: window.api() löst JSON bereits auf UND wirft bei !ok einen Error mit .status
-  // (für 404/503-Branching in syncTeamFromBoard/onDispatch genutzt); Fallback macht .json() + .status selbst.
+  // (für 404/503-Branching in syncTeamFromBoard/onDispatch/onMissionStart genutzt); Fallback macht .json() + .status selbst.
   // CSRF wird NICHT hier gesetzt — der globale window.fetch-Wrapper (index.html, sameOriginUnsafe)
   // injiziert den X-Hermes-CSRF-Token in beide Pfade automatisch (nur bei aktivierter Auth nötig).
   function callApi(path, opts) {
@@ -151,12 +154,9 @@
   // ── State ─────────────────────────────────────────────────────────────────
   let kanbanES = null;       // EventSource für Team-Live-Updates (Board-Diff)
   let pollTimer = null;      // Fallback-Poll-Timer
-  let chatES = null;         // EventSource für Mira-Mission-Antwort
   let panelActive = false;
 
   // Team-Chat-State.
-  let miraBubble = null;     // aktuelle Stream-Senke (Body-Element der laufenden Mira-Bubble)
-  let miraRawText = '';      // roher (un-gerenderter) Text der laufenden Mira-Bubble
   const seenTasks = new Map(); // task-id → { status, assignee }  (für Board-Diff)
   let teamSynced = false;    // false = erster Sync nur befüllen, keine Bubbles (keine Altlast-Flut)
 
@@ -333,10 +333,6 @@
     if (main) main.classList.remove('loki-active');
     panelActive = false;
     stopTeamLive();
-    // Mission-Live-Stream (chat/stream SSE) ebenfalls schließen — sonst bleibt die
-    // Verbindung beim Wegnavigieren vor stream_end offen (Ressourcen-Leak),
-    // analog zum kanbanES-Cleanup in stopTeamLive().
-    if (chatES) { try { chatES.close(); } catch (_) {} chatES = null; }
   }
 
   function openPanel() {
@@ -409,122 +405,64 @@
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  //  MISSION STARTEN  (session/new → chat/start → chat/stream SSE)
+  //  MISSION STARTEN  (Mission als Kanban-TRIAGE-TASK → auto_decompose verteilt ans Team)
   // ───────────────────────────────────────────────────────────────────────────
+  // Statt einen Solo-Chat mit Mira zu starten, legen wir die Mission als TRIAGE-Task an:
+  //   POST /api/kanban/tasks { title, body, triage:true }  (api/kanban_bridge.py:1164/:306).
+  // Der Gateway zerlegt sie via auto_decompose (Mira = global gesetztes orchestrator_profile)
+  // und verteilt Subtasks an die Worker — das ist der bewiesene Delegations-Weg. Die
+  // entstehenden Subtasks erscheinen über syncTeamFromBoard() als Worker-Bubbles.
   async function onMissionStart() {
     const textEl = document.getElementById('lokiMissionText');
-    const profEl = document.getElementById('lokiProfileSelect');
     const goBtn = document.getElementById('lokiMissionGo');
-    const message = (textEl && textEl.value || '').trim();
-    if (!message) { toast('Mission-Text fehlt', 'error'); return; }
-    const profile = (profEl && profEl.value || '').trim();
+    const mission = (textEl && textEl.value || '').trim();
+    if (!mission) { toast('Mission-Text fehlt', 'error'); return; }
 
-    goBtn.disabled = true;
-    goBtn.textContent = '… startet';
+    // Kurztitel ableiten: erste Zeile bzw. die ersten ~10 Wörter, hart auf 80 Zeichen
+    // gekürzt (für das title-Feld). Die VOLLE Mission geht ins body-Feld.
+    const firstLine = mission.split('\n')[0].trim();
+    let title = (firstLine || mission).split(/\s+/).slice(0, 10).join(' ');
+    if (title.length > 80) title = title.slice(0, 80).trim();
+    if (!title) title = mission.slice(0, 80).trim();
 
     // (a) Mission als USER-Bubble (Olivers Auftrag an das Team).
-    appendBubble(null, renderMd(message), 'user');
-    // Textfeld leeren — der Auftrag steht jetzt im Verlauf.
-    if (textEl) textEl.value = '';
+    appendBubble(null, renderMd(mission), 'user');
 
-    // (b) Leere MIRA-Bubble anlegen und deren Body als Stream-Senke merken.
-    miraRawText = '';
-    miraBubble = appendBubble('mira', '<span class="loki-typing">Mira denkt nach…</span>', 'mira');
+    goBtn.disabled = true;
+    goBtn.textContent = '… sende';
 
     try {
-      // 1) Session anlegen (Voraussetzung für chat/start).
-      const sessPayload = {};
-      if (profile && profile !== 'default') sessPayload.profile = profile;
-      const sess = await callApi('/api/session/new', {
+      const res = await callApi('/api/kanban/tasks', {
         method: 'POST',
-        body: JSON.stringify(sessPayload),
+        body: JSON.stringify({ title, body: mission, triage: true }),
       });
-      const sessionId = sess && sess.session && sess.session.session_id;
-      if (!sessionId) throw new Error('keine session_id erhalten');
-
-      // 2) Mission an den Orchestrator-Agent (Mira).
-      const startPayload = { session_id: sessionId, message };
-      if (profile && profile !== 'default') startPayload.profile = profile;
-      const started = await callApi('/api/chat/start', {
-        method: 'POST',
-        body: JSON.stringify(startPayload),
-      });
-      if (started && started.error) {
-        throw new Error(started.error + (started.active_stream_id ? ' (aktiver Stream läuft bereits)' : ''));
+      const task = res && res.task;
+      if (!task || !task.id) {
+        throw new Error('keine Task-ID erhalten');
       }
-      const streamId = started && started.stream_id;
-      if (!streamId) throw new Error('keine stream_id erhalten');
-
-      attachChatStream(streamId);
-      toast('Mission gestartet', 'success');
+      // Erfolg: Mira nimmt die Mission auf und zerlegt sie via auto_decompose.
+      appendBubble('mira',
+        '🧭 Mira nimmt die Mission auf und verteilt sie ans Team … (kann einen Moment dauern)',
+        'system');
+      // Mission-Textarea leeren — der Auftrag steht jetzt im Verlauf.
+      if (textEl) textEl.value = '';
+      // Live-Sync sicherstellen + sofort abgleichen → die entstehenden Subtasks
+      // erscheinen als Worker-Bubbles.
+      startTeamLive();
+      syncTeamFromBoard();
     } catch (e) {
-      const m = e && e.message ? e.message : e;
-      appendBubble(null, 'Mission fehlgeschlagen: ' + esc(m), 'system');
-      toast('Mission fehlgeschlagen', 'error');
-      miraBubble = null;
+      const s = e && e.status;
+      if (s === 404 || s === 503) {
+        appendBubble(null, 'Kanban ist auf diesem Hermes nicht aktiv.', 'system');
+      } else {
+        const m = e && e.message ? e.message : e;
+        appendBubble(null, 'Konnte die Mission nicht anlegen: ' + esc(m), 'system');
+      }
+      toast('Mission konnte nicht angelegt werden', 'error');
     } finally {
       goBtn.disabled = false;
       goBtn.textContent = '▶ Mission starten';
     }
-  }
-
-  // Inkrementell Text an die laufende Mira-Bubble anhängen (roh sammeln, dann renderMd).
-  function appendToMira(text) {
-    if (!miraBubble) return;
-    miraRawText += text;
-    miraBubble.innerHTML = renderMd(miraRawText);
-    const chat = document.getElementById('lokiChat');
-    if (chat) chat.scrollTop = chat.scrollHeight;
-  }
-
-  function attachChatStream(streamId) {
-    // Alten Chat-Stream schließen.
-    if (chatES) { try { chatES.close(); } catch (_) {} chatES = null; }
-    const url = '/api/chat/stream?stream_id=' + encodeURIComponent(streamId);
-    let es;
-    try { es = new EventSource(url, { withCredentials: true }); }
-    catch (_) { appendBubble(null, 'Live-Stream nicht verfügbar (Antwort läuft serverseitig).', 'system'); return; }
-    chatES = es;
-
-    // Text-Deltas + Reasoning live in die Mira-Bubble.
-    es.addEventListener('token', (ev) => {
-      try { const d = JSON.parse(ev.data); if (d && d.text) appendToMira(d.text); } catch (_) {}
-    });
-    es.addEventListener('reasoning', (ev) => {
-      try { const d = JSON.parse(ev.data); if (d && d.text) appendToMira(d.text); } catch (_) {}
-    });
-    es.addEventListener('tool', (ev) => {
-      try {
-        const d = JSON.parse(ev.data);
-        if (d && d.name) {
-          // Dezente Tool-Zeile in der laufenden Mira-Bubble.
-          appendToMira('\n[nutzt ' + d.name + ']\n');
-        }
-      } catch (_) {}
-    });
-    es.addEventListener('apperror', (ev) => {
-      try {
-        // Echte Payload-Formen: streaming.py _provider_error_payload {message,type,hint,details}
-        // bzw. Gateway-Pfad gateway_chat.py {label,type,message,hint}. Es gibt KEIN 'error'-Feld
-        // — deshalb message/label/details lesen (d.error nur als Altfall-Fallback).
-        const d = JSON.parse(ev.data);
-        const m = d && (d.message || d.label || d.details || d.error);
-        appendBubble(null, 'Agent-Fehler: ' + esc(m || 'unbekannt'), 'system');
-      } catch (_) {}
-    });
-    es.addEventListener('stream_end', () => {
-      try { es.close(); } catch (_) {}
-      chatES = null;
-      miraBubble = null;
-      appendBubble(null, 'Mira hat die Aufgabe verteilt.', 'system');
-      // Board-Diff anstoßen → die erzeugten Tasks erscheinen als Team-Bubbles.
-      syncTeamFromBoard();
-    });
-    es.onerror = () => {
-      // SSE bricht auch bei normalem Streamende ab — nicht als harten Fehler werten.
-      // Team-Verlauf trotzdem abgleichen.
-      syncTeamFromBoard();
-    };
   }
 
   // ───────────────────────────────────────────────────────────────────────────
