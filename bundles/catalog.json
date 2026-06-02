@@ -1,11 +1,12 @@
 {
+  "_comment": "bundle-Pfade sind same-origin (/extensions/), weil die WebUI-CSP cross-origin fetch blockiert. catalog.json + die *.json-Bundles ins Extension-Verzeichnis legen (neben den .js/.css).",
   "agents": [
     {
       "name": "nina",
       "emoji": "🎨",
       "role": "Grafikerin",
       "description": "Erstellt Grafiken, Thumbnails & Brand-Visuals — fertig zum Posten, im Look deiner Marke.",
-      "bundle": "https://raw.githubusercontent.com/oliverhees/lokyy-webui-extensions/main/bundles/nina.json"
+      "bundle": "/extensions/nina.json"
     }
   ]
 }

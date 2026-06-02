@@ -18,7 +18,9 @@
 
   const BTN_ID = 'lokyy-agent-import-btn';
   const MODAL_ID = 'lokyy-agent-import-modal';
-  const CATALOG_URL = 'https://raw.githubusercontent.com/oliverhees/lokyy-webui-extensions/main/bundles/catalog.json';
+  // Same-origin laden (WebUI-CSP blockiert cross-origin fetch zu GitHub).
+  // catalog.json + Bundles liegen neben den Extension-Dateien unter /extensions/.
+  const CATALOG_URL = '/extensions/catalog.json';
 
   function callApi(path, opts) {
     if (typeof window.api === 'function') return Promise.resolve(window.api(path, opts));
