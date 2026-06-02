@@ -674,9 +674,11 @@
 
       const parse = (ev) => { try { return ev && ev.data ? JSON.parse(ev.data) : {}; } catch (_) { return {}; } };
 
-      // token / reasoning → Text-Delta.
-      es.addEventListener('token', (ev) => { const d = parse(ev); appendText(d && d.text); });
-      es.addEventListener('reasoning', (ev) => { const d = parse(ev); appendText(d && d.text); });
+      // token → die eigentliche Antwort (Text-Delta). Beim ersten Token den "tippt…"-Status entfernen.
+      es.addEventListener('token', (ev) => { const d = parse(ev); if (d && d.text) { if (!buf) setBubbleStatus(body, '', null); appendText(d.text); } });
+      // reasoning = internes Denken des Agenten — NICHT in den finalen Antworttext hängen
+      // (sonst Duplikat: Denken enthält oft einen Antwort-Entwurf). Nur als dezenten Status zeigen.
+      es.addEventListener('reasoning', (ev) => { const d = parse(ev); if (d && d.text && !buf) setBubbleStatus(body, '💭 überlegt…', null); });
       // tool → dezente "[nutzt <name>]"-Zeile.
       es.addEventListener('tool', (ev) => { const d = parse(ev); appendToolNote(d && d.name); });
       // apperror → Status auf Fehler.
