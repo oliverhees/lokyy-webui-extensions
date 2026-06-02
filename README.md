@@ -9,6 +9,7 @@ Fork**, überlebt Upstream-Updates. Basis für Lokyy OS / das KIMIBOCA-Bootcamp.
 | Extension | Zweck |
 |-----------|-------|
 | [`mcp-manager`](./mcp-manager) | „MCP-Server hinzufügen"-Button + Formular in Settings → System. Erlaubt nicht-technischen Usern, MCP-Server über die UI zu verwalten (statt `config.yaml` von Hand). |
+| [`agent-importer`](./agent-importer) | Importiert einen kompletten Agenten (Profil + SOUL.md + MCP + Skills) aus einem JSON-Bundle in einem Klick. Beispiel: `bundles/nina.json`. |
 
 ## Schnellinstallation (Docker / Coolify)
 

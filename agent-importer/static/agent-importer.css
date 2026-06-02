@@ -1,0 +1,62 @@
+/* Lokyy OS — Agent Importer Extension Styling (Hermes WebUI Dark Theme) */
+
+.lokyy-ai-import-btn {
+  display: block; width: calc(100% - 24px); margin: 10px 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--accent, #f59e0b); background: transparent;
+  color: var(--accent, #f59e0b); border-radius: 8px;
+  font: 600 13px system-ui, sans-serif; cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.lokyy-ai-import-btn:hover { background: var(--accent, #f59e0b); color: #0b0d16; }
+
+.lokyy-ai-overlay {
+  position: fixed; inset: 0; z-index: 10000;
+  background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.lokyy-ai-overlay[hidden] { display: none !important; }
+.lokyy-ai-dialog {
+  width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto;
+  background: var(--panel, #14161f); color: var(--text, #e8e8ee);
+  border: 1px solid var(--border, #2a2d3a); border-radius: 12px;
+  padding: 18px 20px; box-shadow: 0 20px 60px rgba(0,0,0,.5);
+}
+.lokyy-ai-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.lokyy-ai-head h3 { margin: 0; font-size: 16px; }
+.lokyy-ai-x { background: transparent; border: none; color: var(--muted, #9aa0b4); font-size: 22px; line-height: 1; cursor: pointer; }
+.lokyy-ai-x:hover { color: var(--text, #fff); }
+
+.lokyy-ai-label { display: block; margin: 10px 0; font-size: 12px; color: var(--muted, #9aa0b4); }
+.lokyy-ai-label input[type="text"], .lokyy-ai-label input:not([type]) {
+  width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px 10px;
+  background: var(--input, #0e1018); color: var(--text, #e8e8ee);
+  border: 1px solid var(--border, #2a2d3a); border-radius: 7px;
+  font: 13px ui-monospace, monospace;
+}
+.lokyy-ai-or { text-align: center; color: var(--muted, #777c90); font-size: 11px; margin: 6px 0; }
+.lokyy-ai-note {
+  font-size: 11px; color: var(--muted, #9aa0b4);
+  background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.25);
+  border-radius: 7px; padding: 8px 10px; margin: 12px 0;
+}
+.lokyy-ai-note code { background: var(--input, #0e1018); padding: 1px 4px; border-radius: 4px; }
+
+.lokyy-ai-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+.lokyy-ai-primary {
+  padding: 9px 18px; border: none; border-radius: 8px;
+  background: var(--accent, #f59e0b); color: #0b0d16; font: 600 13px system-ui, sans-serif; cursor: pointer;
+}
+.lokyy-ai-primary:disabled { opacity: .6; cursor: default; }
+.lokyy-ai-ghost {
+  padding: 9px 16px; border: 1px solid var(--border, #2a2d3a); background: transparent;
+  color: var(--muted, #9aa0b4); border-radius: 8px; font: 13px system-ui, sans-serif; cursor: pointer;
+}
+
+.lokyy-ai-log {
+  margin-top: 14px; padding: 10px; border-top: 1px solid var(--border, #2a2d3a);
+  max-height: 220px; overflow-y: auto; font: 12px ui-monospace, monospace;
+}
+.lokyy-ai-log-line { padding: 2px 0; }
+.lokyy-ai-ok { color: #22c55e; }
+.lokyy-ai-err { color: #ef4444; }
+.lokyy-ai-info { color: var(--muted, #9aa0b4); }
