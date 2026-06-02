@@ -26,7 +26,15 @@
     if (typeof window.api === 'function') return Promise.resolve(window.api(path, opts));
     return fetch(path, { credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, ...opts }).then((r) => r.json());
   }
-  function toast(msg, type) { if (typeof window.showToast === 'function') window.showToast(msg, type); }
+  // Verifizierte Host-Signatur: showToast(msg, ms, type) (hermes-webui static/ui.js:4130).
+  // Der 3. Parameter ist der type; der 2. ist die Auto-Dismiss-Dauer in ms. Wir übersetzen
+  // type→ms (error länger sichtbar) + type, damit die Einfärbung korrekt greift und der
+  // type-String NICHT im ms-Parameter landet.
+  function toast(msg, type) {
+    const ms = type === 'error' ? 5000 : 3000;
+    if (typeof window.showToast === 'function') window.showToast(msg, ms, type);
+    else console.log('[agent-importer]', type || 'info', msg);
+  }
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   let logEl = null;

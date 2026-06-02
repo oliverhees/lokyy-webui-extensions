@@ -28,8 +28,13 @@
     }).then((r) => r.json());
   }
 
+  // Verifizierte Host-Signatur: showToast(msg, ms, type) (hermes-webui static/ui.js:4130).
+  // Der 3. Parameter ist der type; der 2. ist die Auto-Dismiss-Dauer in ms. Wir übersetzen
+  // type→ms (error länger sichtbar) + type, damit die Einfärbung korrekt greift und der
+  // type-String NICHT im ms-Parameter landet.
   function toast(msg, type) {
-    if (typeof window.showToast === 'function') window.showToast(msg, type);
+    const ms = type === 'error' ? 5000 : 3000;
+    if (typeof window.showToast === 'function') window.showToast(msg, ms, type);
     else console.log('[mcp-manager]', type || 'info', msg);
   }
 
