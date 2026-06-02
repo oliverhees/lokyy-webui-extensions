@@ -3,7 +3,7 @@
  * --------------------------------------------------------------------------
  * "Die Agentur am Tisch" — ein MULTI-AGENT @mention-CHAT-Panel für Loki OS.
  *
- * Was es tut (P2 — Einzelansprache, NOCH KEINE Mira-Kaskade):
+ * Was es tut (P3 — Einzelansprache + MIRA-KASKADE: Agenten delegieren selbst weiter):
  *   1. Eigener Nav-Eintrag "🐺 Loki Orchestrator" in der Rail + Sidebar-Nav.
  *   2. 2-Spalten-Layout im Panel-Body:
  *        LINKS  — schmale Agenten-Liste (.loki-team-list), gespeist aus GET /api/profiles.
@@ -495,13 +495,105 @@
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  //  SENDEN  (P2 — Einzelansprache, seriell pro @mention)
+  //  @mentions PARSEN  (gemeinsam für onSend + MIRA-KASKADE)
+  // ───────────────────────────────────────────────────────────────────────────
+  // parseMentions(text): extrahiert @mentions aus beliebigem Text und gibt eindeutige,
+  //   EXISTIERENDE Profilnamen (kanonische Schreibweise aus profileList) zurück.
+  //   Regex /@([a-zA-Z0-9_-]+)/g + Abgleich gegen findProfile (case-insensitive, dedupe).
+  //   Reihenfolge = Reihenfolge des ersten Auftretens im Text.
+  function parseMentions(text) {
+    const out = [];
+    const seen = new Set();
+    const re = /@([a-zA-Z0-9_-]+)/g;
+    let m;
+    while ((m = re.exec(String(text == null ? '' : text))) !== null) {
+      const prof = findProfile(m[1]);
+      if (prof && !seen.has(prof.name.toLowerCase())) {
+        seen.add(prof.name.toLowerCase());
+        out.push(prof.name);
+      }
+    }
+    return out;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  //  MIRA-KASKADE  (P3 — "die Agentur am Tisch" delegiert selbst weiter)
+  // ───────────────────────────────────────────────────────────────────────────
+  // runConversation(initialAgents, userText):
+  //   Orchestriert die Kaskade. Jede Aufgabe ist {profile, task, fromAgent, depth}.
+  //   Start: alle initialAgents mit task=userText, fromAgent=null, depth=0.
+  //   Nach jeder Antwort: parseMentions(answer) MINUS sich selbst MINUS bereits in dieser
+  //   Runde aufgerufene Agenten → neue Aufgaben (depth+1) mit weitergereichtem Auftrag.
+  //
+  //   LOOP-SCHUTZ (strikt):
+  //     - MAX_CALLS = 6  : harte Obergrenze an Agent-Aufrufen pro User-Nachricht.
+  //     - MAX_DEPTH = 2  : maximal 2 Kaskaden-Runden NACH der ersten Runde (depth 0,1,2).
+  //     - calledThisTurn : Set, das pro User-Nachricht jeden Agenten nur EINMAL zulässt.
+  //   Bei erreichtem Limit: dezente system-Bubble + Abbruch (keine UI-Flut, kein Endlos).
+  const MAX_CALLS = 6;   // GESAMT-Aufruflimit pro User-Nachricht
+  const MAX_DEPTH = 2;   // max. Kaskaden-Runden nach der ersten (depth 0 = initial)
+
+  async function runConversation(initialAgents, userText) {
+    const queue = (initialAgents || []).map((p) => ({ profile: p, task: userText, fromAgent: null, depth: 0 }));
+    const calledThisTurn = new Set(); // jeder Agent nur einmal pro User-Nachricht
+    let calls = 0;
+    let limitNoted = false;
+
+    const noteLimit = () => {
+      if (limitNoted) return;
+      limitNoted = true;
+      appendBubble(null, '↪︎ (weitere Verteilung gestoppt — Limit erreicht)', 'system');
+    };
+
+    while (queue.length) {
+      const job = queue.shift();
+      const key = String(job.profile).toLowerCase();
+
+      // Pro Runde keinen Agenten doppelt aufrufen.
+      if (calledThisTurn.has(key)) continue;
+
+      // Harte Obergrenze: Gesamt-Aufruflimit.
+      if (calls >= MAX_CALLS) { noteLimit(); break; }
+
+      // Kaskadierter Aufruf? Dezente Delegations-Zeile vor der Kind-Bubble.
+      if (job.fromAgent) {
+        appendBubble(null, '↪︎ @' + esc(job.profile) + ' übernimmt', 'system');
+      }
+
+      calledThisTurn.add(key);
+      calls += 1;
+
+      // Kontext: letzte ~8 Bubbles (inkl. der gerade entstandenen Antworten/User-Bubble).
+      const contextText = collectContext(8);
+      // eslint-disable-next-line no-await-in-loop
+      const answer = await callAgent(job.profile, job.task, contextText);
+
+      // Tiefenlimit erreicht → keine weitere Delegation aus dieser Antwort.
+      if (job.depth >= MAX_DEPTH) continue;
+
+      // Kind-Mentions aus der Antwort: existierende Profile MINUS man selbst MINUS schon aufgerufene.
+      const childMentions = parseMentions(answer).filter((child) => {
+        const ck = child.toLowerCase();
+        return ck !== key && !calledThisTurn.has(ck);
+      });
+
+      for (const child of childMentions) {
+        const handoff =
+          'Dein Teammitglied "' + job.profile + '" hat dich (@' + child + ') gebeten:\n\n' + answer;
+        queue.push({ profile: child, task: handoff, fromAgent: job.profile, depth: job.depth + 1 });
+      }
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  //  SENDEN  (P3 — startet die MIRA-KASKADE via runConversation)
   // ───────────────────────────────────────────────────────────────────────────
   // onSend():
-  //   1. Text trimmen. @mentions parsen → gültige Profilnamen (case-insensitive).
+  //   1. Text trimmen. @mentions parsen (parseMentions) → gültige Profilnamen.
   //      Keine gültige Mention → Default 'mira' (falls vorhanden, sonst 'default').
   //   2. User-Bubble anhängen, Eingabe leeren.
-  //   3. Für JEDEN angesprochenen Agent SERIELL callAgent(profile, userText, contextText).
+  //   3. runConversation(mentionedProfiles, userText) — orchestriert serielle Aufrufe
+  //      inkl. selbst-erzeugter Kind-Delegationen (Loop-Schutz: MAX_CALLS/MAX_DEPTH).
   async function onSend() {
     if (sending) return;
     const input = document.getElementById('lokiInput');
@@ -511,18 +603,8 @@
 
     closeMentionPop();
 
-    // (1) @mentions extrahieren → nur gültige Profile (case-insensitive, in Reihenfolge, dedupe).
-    const mentioned = [];
-    const seen = new Set();
-    const re = /@([a-zA-Z0-9_-]+)/g;
-    let m;
-    while ((m = re.exec(text)) !== null) {
-      const prof = findProfile(m[1]);
-      if (prof && !seen.has(prof.name.toLowerCase())) {
-        seen.add(prof.name.toLowerCase());
-        mentioned.push(prof.name);
-      }
-    }
+    // (1) @mentions extrahieren (gemeinsame parseMentions-Logik).
+    const mentioned = parseMentions(text);
     // Default-Adressat, wenn keine gültige @mention vorhanden.
     if (!mentioned.length) {
       const def = findProfile('mira') ? 'mira' : (findProfile('default') ? 'default' : (profileList[0] && profileList[0].name) || 'default');
@@ -533,19 +615,13 @@
     appendBubble(null, renderMd(text), 'user');
     if (input) { input.value = ''; autoGrow(input); }
 
-    // Kontext: Verlauf VOR dem Senden inkl. der gerade gesetzten User-Bubble.
-    const context = collectContext(8);
-
     sending = true;
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
     if (input) input.disabled = true;
 
     try {
-      // (3) Seriell jeden angesprochenen Agent abarbeiten.
-      for (const profile of mentioned) {
-        // eslint-disable-next-line no-await-in-loop
-        await callAgent(profile, text, context);
-      }
+      // (3) Kaskade starten. Kontext wird in runConversation pro Aufruf frisch gesammelt.
+      await runConversation(mentioned, text);
     } finally {
       sending = false;
       if (btn) { btn.disabled = false; btn.textContent = '➤ Senden'; }
@@ -554,13 +630,16 @@
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  //  callAgent(profile, task, context)  →  Promise (resolved bei stream_end/onerror)
+  //  callAgent(profile, task, context)  →  Promise<string> (gesammelter Antworttext)
   // ───────────────────────────────────────────────────────────────────────────
   // Eine direkte Nachricht an EINEN Agenten:
   //   POST /api/session/new {profile}              → session.session_id
   //   POST /api/chat/start  {session_id,message,profile} → stream_id
   //   GET  /api/chat/stream?stream_id=… (SSE)       → live an die Agent-Bubble
   // XSS: gesammelter Plaintext, am Ende via renderMd gerendert (live nur textContent-Append).
+  // RÜCKGABE: resolve(buf) mit dem finalen Antworttext (für die MIRA-KASKADE, damit
+  //   runConversation die @mentions der Antwort parsen kann). Bei Fehler/leer → resolve('').
+  //   Schlägt NIE hart fehl (serieller/kaskadierter Ablauf darf nicht abbrechen).
   function callAgent(profile, task, context) {
     return new Promise(async (resolve) => {
       // Agent-Bubble anlegen, Status "⚙️ tippt…".
@@ -578,7 +657,7 @@
       } catch (e) {
         setBubbleStatus(body, '', null);
         if (body) body.innerHTML = renderMd('⚠️ Konnte keine Session öffnen: ' + (e && e.message ? e.message : e));
-        resolve();
+        resolve('');
         return;
       }
 
@@ -599,7 +678,7 @@
       } catch (e) {
         setBubbleStatus(body, '', null);
         if (body) body.innerHTML = renderMd('⚠️ Konnte den Chat nicht starten: ' + (e && e.message ? e.message : e));
-        resolve();
+        resolve('');
         return;
       }
 
@@ -631,7 +710,7 @@
           body.appendChild(span);
           if (chatAtBottom(chat)) chat.scrollTop = chat.scrollHeight;
         }
-        resolve();
+        resolve(buf);
       };
 
       const appendText = (t) => {
@@ -667,7 +746,7 @@
       } catch (e) {
         setBubbleStatus(body, '', null);
         if (body) body.innerHTML = renderMd('⚠️ Stream konnte nicht geöffnet werden.');
-        resolve();
+        resolve('');
         return;
       }
       activeStreams.add(es);
