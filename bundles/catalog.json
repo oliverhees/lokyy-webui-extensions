@@ -1,12 +1,68 @@
 {
-  "_comment": "bundle-Pfade sind same-origin (/extensions/), weil die WebUI-CSP cross-origin fetch blockiert. catalog.json + die *.json-Bundles ins Extension-Verzeichnis legen (neben den .js/.css).",
+  "_comment": "Bundle-Pfade same-origin (/extensions/) wegen WebUI-CSP.",
   "agents": [
+    {
+      "name": "mira",
+      "emoji": "🧭",
+      "role": "Chef-Assistentin",
+      "description": "Orchestriert dein Team, managt Inbox & Termine und liefert jeden Morgen den Tagesreport — ungefragt.",
+      "bundle": "/extensions/mira.json"
+    },
+    {
+      "name": "tanja",
+      "emoji": "📱",
+      "role": "Social Media Managerin",
+      "description": "Plant Content, schreibt Posts und hält deine Kanäle am Leben — in deinem Ton, auf deinen Plattformen.",
+      "bundle": "/extensions/tanja.json"
+    },
+    {
+      "name": "peter",
+      "emoji": "🔍",
+      "role": "Researcher",
+      "description": "Recherchiert Themen, prüft Quellen und liefert Markt- & Wettbewerbsanalysen auf Abruf.",
+      "bundle": "/extensions/peter.json"
+    },
+    {
+      "name": "lars",
+      "emoji": "✍️",
+      "role": "Content-Writer",
+      "description": "Schreibt Newsletter, Artikel und Texte in deinem Stil — vom Rohentwurf bis zum Feinschliff.",
+      "bundle": "/extensions/lars.json"
+    },
+    {
+      "name": "sophia",
+      "emoji": "📊",
+      "role": "Daten-Analystin",
+      "description": "Macht aus Excel-Chaos klare Reports & Dashboards. Deine Zahlen, genau dann wenn du sie brauchst.",
+      "bundle": "/extensions/sophia.json"
+    },
     {
       "name": "nina",
       "emoji": "🎨",
       "role": "Grafikerin",
       "description": "Erstellt Grafiken, Thumbnails & Brand-Visuals — fertig zum Posten, im Look deiner Marke.",
       "bundle": "/extensions/nina.json"
+    },
+    {
+      "name": "tom",
+      "emoji": "🎬",
+      "role": "Videograph",
+      "description": "Schneidet Videos, baut Shorts und setzt Untertitel. Dein Content-Output verdoppelt sich.",
+      "bundle": "/extensions/tom.json"
+    },
+    {
+      "name": "jonas",
+      "emoji": "🤝",
+      "role": "Lead-Manager",
+      "description": "Pflegt dein Open-Source-CRM, qualifiziert Leads und erinnert an Follow-ups. Kein Lead geht verloren.",
+      "bundle": "/extensions/jonas.json"
+    },
+    {
+      "name": "max",
+      "emoji": "🛠️",
+      "role": "DevOps & Tech",
+      "description": "Hält deinen Server am Laufen: Backups, Monitoring, Updates. Läuft im Hintergrund, ganz automatisch.",
+      "bundle": "/extensions/max.json"
     }
   ]
 }
