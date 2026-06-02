@@ -1,0 +1,11 @@
+{
+  "agents": [
+    {
+      "name": "nina",
+      "emoji": "🎨",
+      "role": "Grafikerin",
+      "description": "Erstellt Grafiken, Thumbnails & Brand-Visuals — fertig zum Posten, im Look deiner Marke.",
+      "bundle": "https://raw.githubusercontent.com/oliverhees/lokyy-webui-extensions/main/bundles/nina.json"
+    }
+  ]
+}
