@@ -1,0 +1,79 @@
+/*
+ * Lokyy OS — Loki Branding Extension für Hermes WebUI (nesquena/hermes-webui)
+ * --------------------------------------------------------------------------
+ * White-Label: definiert das "loki"-Skin (Akzent-Palette). Folgt exakt dem
+ * dokumentierten Skin-Contract aus THEMES.md (Repo-Root) des Upstream-Repos:
+ *
+ *   - Skin wird als data-skin="loki" auf <html> gesetzt (loki.js erledigt das).
+ *   - Hermes splittet Theme (Light/Dark via .dark-Klasse auf <html>) und Skin.
+ *     Ein Skin definiert deshalb je eine LIGHT- und eine DARK-Variante:
+ *         :root[data-skin="loki"]        → Light
+ *         :root.dark[data-skin="loki"]   → Dark
+ *   - Die fünf Akzent-Variablen sind der vollständige Contract:
+ *         --accent --accent-hover --accent-bg --accent-bg-strong --accent-text
+ *     Verifiziert gegen THEMES.md @ master (Repo-Root, ~170 Zeilen). Alle fünf
+ *     Variablen stehen im offiziellen Skin-Beispiel-Block: --accent (Z.76),
+ *     --accent-hover (Z.77), --accent-bg (Z.78), --accent-bg-strong (Z.79) und
+ *     --accent-text (Z.80) für die Light-Variante, sowie erneut --accent-bg-strong
+ *     (Z.88) in der Dark-Variante. --accent-bg-strong ist also nachweislich Teil
+ *     des Contracts ("Highlighted backgrounds"), keine Erfindung.
+ *
+ * ABHÄNGIGKEIT zur JS-Seite (kritisch):
+ *   Diese Regeln greifen NUR, solange data-skin="loki" auf <html> gesetzt ist.
+ *   Der Host kennt 'loki' nicht (fehlt in boot.js _VALID_SKINS und in der
+ *   no-flash-Allowlist von index.html), und boot.js' _applySkin('default')
+ *   LÖSCHT data-skin nach /api/settings wieder. Einzige Quelle der Wahrheit,
+ *   die data-skin="loki" hält, ist der Re-Assert in loki.js (Attribut-Observer
+ *   auf document.documentElement). Ohne diesen JS-Teil ist dieses CSS tot.
+ *
+ * Farbschema: tiefes Smaragd/Teal (#1f9e7a). Markant, modern, ruhig.
+ * → Oliver kann die Hex-Werte hier jederzeit anpassen, ohne JS anzufassen.
+ */
+
+/* ── Loki Skin · LIGHT ─────────────────────────────────────────────────── */
+:root[data-skin="loki"] {
+  --accent:           #1f9e7a;                  /* Active states, Links, Primary-Buttons */
+  --accent-hover:     #17795d;                  /* Hover (dunkler) */
+  --accent-bg:        rgba(31, 158, 122, 0.08); /* Soft getönter Hintergrund */
+  --accent-bg-strong: rgba(31, 158, 122, 0.16); /* Hervorgehobener Hintergrund */
+  --accent-text:      #136049;                  /* Text auf --accent-bg (dunkel, lesbar) */
+}
+
+/* ── Loki Skin · DARK (heller/saturierter für Kontrast auf dunklen Flächen) ─ */
+:root.dark[data-skin="loki"] {
+  --accent:           #2fc79b;
+  --accent-hover:     #4fd9b1;
+  --accent-bg:        rgba(47, 199, 155, 0.10);
+  --accent-bg-strong: rgba(47, 199, 155, 0.20);
+  --accent-text:      #5fe0bd;                  /* helle Akzentschrift auf dunklem Tint */
+}
+
+/*
+ * ── Dezente Logo-Anpassung (optional) ───────────────────────────────────
+ * Das Titlebar-/Empty-State-Logo ist ein Inline-SVG mit HARTKODIERTEN
+ * Gold-Stops (#F5C542 / #D4961C) — verifiziert in static/index.html @ master:
+ *   #app-titlebar-gold → kleines Titlebar-Icon
+ *   #hermes-gold       → großes Empty-State-Logo
+ * Beide Gradients: stop:first-child (0%) = #F5C542, stop:last-child (100%) =
+ * #D4961C. Die <stop>-Farben stehen als Inline-Attribut style="stop-color:..."
+ * direkt im Markup, nicht als var(--accent).
+ *
+ * WICHTIG — !important ist hier zwingend: Ein Inline-style-Attribut gewinnt
+ * im Cascade-Origin immer gegen eine normale Stylesheet-Regel, unabhängig
+ * von der Selektor-Spezifität. Ohne !important bliebe das Logo GOLD
+ * (empirisch in echtem Chrome bestätigt: computed stop-color = rgb(245,197,66)
+ * / rgb(212,150,28)). Erst mit !important schlägt die Regel den Inline-Style
+ * (computed dann rgb(63,212,166) / rgb(21,122,93) = Loki-Teal).
+ *
+ * Hinweis: greift nur, wenn das Skin aktiv ist (Scope über data-skin, das
+ * loki.js auf <html> re-asserted). Reine Kosmetik — entfernbar, falls das
+ * Gold-Logo bevorzugt wird.
+ */
+:root[data-skin="loki"] #app-titlebar-gold stop:first-child,
+:root[data-skin="loki"] #hermes-gold stop:first-child {
+  stop-color: #3fd4a6 !important;
+}
+:root[data-skin="loki"] #app-titlebar-gold stop:last-child,
+:root[data-skin="loki"] #hermes-gold stop:last-child {
+  stop-color: #157a5d !important;
+}
