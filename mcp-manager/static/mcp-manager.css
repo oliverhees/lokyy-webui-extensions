@@ -1,0 +1,97 @@
+/* Lokyy OS — MCP Manager Extension Styling (Hermes WebUI Dark Theme) */
+
+.lokyy-mcp-bar { margin: 8px 0 12px; }
+.lokyy-mcp-add-btn {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--accent, #f59e0b);
+  background: transparent;
+  color: var(--accent, #f59e0b);
+  border-radius: 8px;
+  font: 600 13px system-ui, sans-serif;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.lokyy-mcp-add-btn:hover { background: var(--accent, #f59e0b); color: #0b0d16; }
+
+/* Overlay + Dialog */
+.lokyy-mcp-overlay {
+  position: fixed; inset: 0; z-index: 10000;
+  background: rgba(0,0,0,.6);
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+.lokyy-mcp-overlay[hidden] { display: none !important; }
+.lokyy-mcp-dialog {
+  width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto;
+  background: var(--panel, #14161f);
+  color: var(--text, #e8e8ee);
+  border: 1px solid var(--border, #2a2d3a);
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.5);
+}
+.lokyy-mcp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.lokyy-mcp-head h3 { margin: 0; font-size: 16px; }
+.lokyy-mcp-x {
+  background: transparent; border: none; color: var(--muted, #9aa0b4);
+  font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px;
+}
+.lokyy-mcp-x:hover { color: var(--text, #fff); }
+
+/* Formular */
+.lokyy-mcp-form label { display: block; margin: 10px 0; font-size: 12px; color: var(--muted, #9aa0b4); }
+.lokyy-mcp-form input[type="text"],
+.lokyy-mcp-form input:not([type]),
+.lokyy-mcp-form input[type="number"],
+.lokyy-mcp-form textarea {
+  width: 100%; box-sizing: border-box; margin-top: 4px;
+  padding: 8px 10px;
+  background: var(--input, #0e1018);
+  color: var(--text, #e8e8ee);
+  border: 1px solid var(--border, #2a2d3a);
+  border-radius: 7px;
+  font: 13px ui-monospace, monospace;
+}
+.lokyy-mcp-form textarea { resize: vertical; }
+.lokyy-mcp-form small { display: block; margin-top: 3px; color: var(--muted, #777c90); font-size: 11px; }
+.lokyy-mcp-form code { background: var(--input, #0e1018); padding: 1px 4px; border-radius: 4px; }
+.lokyy-mcp-req { color: #f59e0b; }
+
+.lokyy-mcp-transport { display: flex; gap: 16px; margin: 12px 0; }
+.lokyy-mcp-radio { display: flex !important; align-items: center; gap: 6px; color: var(--text, #e8e8ee) !important; font-size: 13px !important; cursor: pointer; }
+.lokyy-mcp-radio input { width: auto !important; margin: 0 !important; }
+
+.lokyy-mcp-note {
+  font-size: 11px; color: var(--muted, #9aa0b4);
+  background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.25);
+  border-radius: 7px; padding: 8px 10px; margin: 12px 0;
+}
+
+.lokyy-mcp-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+.lokyy-mcp-btn-primary {
+  padding: 9px 18px; border: none; border-radius: 8px;
+  background: var(--accent, #f59e0b); color: #0b0d16;
+  font: 600 13px system-ui, sans-serif; cursor: pointer;
+}
+.lokyy-mcp-btn-primary:disabled { opacity: .6; cursor: default; }
+.lokyy-mcp-btn-ghost {
+  padding: 9px 16px; border: 1px solid var(--border, #2a2d3a);
+  background: transparent; color: var(--muted, #9aa0b4);
+  border-radius: 8px; font: 13px system-ui, sans-serif; cursor: pointer;
+}
+
+/* Vorhandene Server */
+.lokyy-mcp-existing { margin-top: 18px; border-top: 1px solid var(--border, #2a2d3a); padding-top: 12px; }
+.lokyy-mcp-existing h4 { margin: 0 0 8px; font-size: 13px; color: var(--muted, #9aa0b4); }
+.lokyy-mcp-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 0; border-bottom: 1px solid var(--border, #20222d);
+}
+.lokyy-mcp-row-name { font-weight: 600; font-size: 13px; }
+.lokyy-mcp-row-detail { flex: 1; font-size: 11px; color: var(--muted, #777c90); font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lokyy-mcp-del {
+  padding: 4px 10px; border: 1px solid #ef4444; background: transparent;
+  color: #ef4444; border-radius: 6px; font-size: 11px; cursor: pointer;
+}
+.lokyy-mcp-del:hover { background: #ef4444; color: #fff; }
