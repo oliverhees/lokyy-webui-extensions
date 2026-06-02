@@ -5,6 +5,14 @@ Fügt der **Settings → System → MCP-Server**-Sektion einen Button **„➕ M
 - **Kein Fork.** Nutzt das offizielle Extension-System von `nesquena/hermes-webui` (`HERMES_WEBUI_EXTENSION_*`) und die bereits existierenden Endpoints `PUT/DELETE/GET /api/mcp/servers`.
 - **Überlebt Upstream-Updates** (rein additiv, kein Core-Patch).
 
+## Status
+
+✅ **Live verifiziert** (2026-06-02) auf `hermeswebui.kimiboca.de` (Coolify, Compose-Deployment).
+Der Button erscheint in Settings → System, das Modal rendert korrekt (Name, HTTP/stdio,
+Server-URL, Auth-Header, Timeout, Liste vorhandener Server). Installation via
+persistentem Volume `hermes-home` (`/home/hermeswebui/.hermes/webui-extension`) + ENV in der
+Compose-Datei. Speichern/Persistenz in `config.yaml` wird im Live-Betrieb geprüft.
+
 ## Dateien
 
 ```
