@@ -1,9 +1,11 @@
 /* Lokyy OS — Loki Orchestrator Extension Styling (Hermes WebUI Dark Theme)
- * V2: Team-Chat ("Agentur am Tisch") statt Kanban-Board.
+ * P2: Multi-Agent @mention-Chat ("Agentur am Tisch").
+ *   - 2-Spalten-Layout: Agenten-Liste links + Chat/Eingabe rechts.
+ *   - @mention-Autocomplete-Dropdown über der Eingabe.
+ *   - Bubbles wie gehabt (user rechts, worker links mit Avatar) + "tippt…"-Status.
  * Nutzt die Host-CSS-Variablen (--bg, --panel, --border, --text, --muted, --accent)
- * mit Fallbacks. Akzentfarbe IMMER über var(--accent, …) — das Loki-Orange kommt
- * aus der loki-branding-Extension. KEIN .main-view (würde display:flex erzwingen) —
- * eigene Klasse. */
+ * mit Fallbacks. Akzentfarbe IMMER über var(--accent, …) — das Loki-Orange kommt aus
+ * der loki-branding-Extension. KEIN .main-view (würde display:flex erzwingen) — eigene Klasse. */
 
 /* ── Panel-Container (main-view-Geschwister, aber NICHT .main-view) ── */
 .loki-orchestrator-panel {
@@ -31,55 +33,76 @@ main.main.loki-active > #mainChat { display: none !important; }
 }
 .loki-head-title { font-size: 15px; font-weight: 700; }
 .loki-sub { font-weight: 400; color: var(--muted, #9aa0b4); font-size: 13px; }
-.loki-head-actions { display: flex; gap: 8px; }
 
+/* ── Buttons ── */
 .loki-btn-primary {
-  padding: 7px 14px; border: none; border-radius: 8px;
+  padding: 9px 16px; border: none; border-radius: 8px;
   background: var(--accent, #14b8a6); color: #06201d;
-  font: 600 13px system-ui, sans-serif; cursor: pointer;
+  font: 600 13px system-ui, sans-serif; cursor: pointer; flex: 0 0 auto;
 }
 .loki-btn-primary:hover { filter: brightness(1.08); }
 .loki-btn-primary:disabled { opacity: .6; cursor: default; }
-.loki-btn-ghost {
-  padding: 7px 12px; border: 1px solid var(--border, #2a2d3a);
-  background: transparent; color: var(--muted, #9aa0b4);
-  border-radius: 8px; font: 13px system-ui, sans-serif; cursor: pointer;
-}
-.loki-btn-ghost:hover { color: var(--text, #fff); border-color: var(--accent, #14b8a6); }
 
-/* ── Mission-Eingabe ── */
-.loki-mission {
-  padding: 12px 16px; border-bottom: 1px solid var(--border, #2a2d3a);
-  flex-shrink: 0; display: flex; flex-direction: column; gap: 8px;
+/* ── 2-Spalten-Body: Team-Liste links + Chat-Bereich rechts ── */
+.loki-body {
+  flex: 1; min-height: 0; display: flex; overflow: hidden;
 }
-.loki-mission-row { display: flex; gap: 8px; align-items: stretch; }
-.loki-select {
-  flex: 0 0 220px; max-width: 260px;
-  padding: 8px 10px; background: var(--input, #0e1018); color: var(--text, #e8e8ee);
-  border: 1px solid var(--border, #2a2d3a); border-radius: 7px;
-  font: 13px system-ui, sans-serif;
-}
-.loki-mission-go { flex: 0 0 auto; }
-.loki-mission-text {
-  width: 100%; box-sizing: border-box; resize: vertical;
-  padding: 9px 11px; background: var(--input, #0e1018); color: var(--text, #e8e8ee);
-  border: 1px solid var(--border, #2a2d3a); border-radius: 8px;
-  font: 13px system-ui, sans-serif; line-height: 1.45;
-}
-.loki-mission-text:focus { outline: none; border-color: var(--accent, #14b8a6); }
 
-/* ── Chat-Verlauf ("Agentur am Tisch") ── */
+/* LINKS — schmale, scrollbare Agenten-Liste. */
+.loki-team-list {
+  flex: 0 0 200px; width: 200px; min-width: 0;
+  border-right: 1px solid var(--border, #2a2d3a);
+  background: var(--panel, #14161f);
+  overflow-y: auto; padding: 10px 8px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.loki-team-head {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted, #9aa0b4); padding: 4px 8px 8px;
+}
+.loki-team-empty {
+  color: var(--muted, #9aa0b4); font-size: 12px; padding: 8px; line-height: 1.5;
+}
+.loki-team-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left;
+  padding: 8px 10px; border: 1px solid transparent; border-radius: 8px;
+  background: transparent; color: var(--text, #e8e8ee);
+  font: 13px system-ui, sans-serif; cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
+}
+.loki-team-item:hover {
+  background: var(--accent-bg, rgba(20, 184, 166, .12));
+  border-color: var(--accent, #14b8a6);
+}
+.loki-team-emoji {
+  width: 24px; height: 24px; flex: 0 0 24px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-size: 14px;
+  background: var(--input, #0e1018); border: 1px solid var(--border, #2a2d3a);
+}
+.loki-team-name {
+  font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* RECHTS — Chat-Bereich (Verlauf oben, Eingabe-Leiste unten). */
+.loki-chat-area {
+  flex: 1; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+
+/* ── Chat-Verlauf ── */
 .loki-chat {
   flex: 1; min-height: 0; overflow-y: auto;
   padding: 16px; display: flex; flex-direction: column; gap: 12px;
 }
 .loki-chat-empty {
   color: var(--muted, #9aa0b4); text-align: center; margin: auto;
-  font-size: 13px; line-height: 1.5; max-width: 360px;
+  font-size: 13px; line-height: 1.6; max-width: 380px;
 }
+.loki-chat-empty strong { color: var(--accent, #14b8a6); }
 
 /* ── Bubbles ── */
-.loki-bubble { display: flex; gap: 10px; max-width: 80%; align-self: flex-start; }
+.loki-bubble { display: flex; gap: 10px; max-width: 82%; align-self: flex-start; }
 
 .loki-avatar {
   width: 30px; height: 30px; flex: 0 0 30px; border-radius: 50%;
@@ -90,6 +113,7 @@ main.main.loki-active > #mainChat { display: none !important; }
 .loki-bubble-card { min-width: 0; }
 .loki-bubble-head {
   font-size: 12px; font-weight: 700; color: var(--text, #e8e8ee); margin-bottom: 3px;
+  display: flex; align-items: center; gap: 6px;
 }
 .loki-bubble-body {
   background: var(--panel, #14161f); border: 1px solid var(--border, #2a2d3a);
@@ -103,26 +127,27 @@ main.main.loki-active > #mainChat { display: none !important; }
 .loki-bubble-img {
   max-width: 100%; border-radius: 8px; margin-top: 6px; display: block;
 }
-.loki-typing { color: var(--muted, #9aa0b4); font-style: italic; }
+
+/* Live-/Final-Text und Tool-Notizen innerhalb einer Worker-Bubble. */
+.loki-live-text, .loki-final-text { white-space: pre-wrap; }
+.loki-tool-note {
+  font: 11px ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: var(--muted, #9aa0b4); opacity: .85; margin: 2px 0; font-style: italic;
+}
 
 /* ── Bubble-Varianten ── */
-/* USER (Olivers Mission): rechts, Akzent-Hintergrund. */
+/* USER: rechts, Akzent-Hintergrund. */
 .loki-bubble-user { align-self: flex-end; flex-direction: row-reverse; }
-.loki-bubble-user .loki-bubble-head { text-align: right; }
+.loki-bubble-user .loki-bubble-head { text-align: right; justify-content: flex-end; }
 .loki-bubble-user .loki-bubble-body {
   background: var(--accent-bg, rgba(20, 184, 166, .14));
   border-color: var(--accent, #14b8a6);
 }
 
-/* MIRA (Orchestrator): dezenter Akzent-Rand. */
-.loki-bubble-mira .loki-bubble-body {
-  border-color: var(--accent, #14b8a6);
-  border-left-width: 3px;
-}
-
-/* WORKER: neutral. */
+/* WORKER (Agent): dezenter Akzent-Rand links. */
 .loki-bubble-worker .loki-bubble-body {
   background: var(--panel, #14161f);
+  border-left: 3px solid var(--accent, #14b8a6);
 }
 
 /* SYSTEM: zentriert, dezent, ohne Avatar/Karte. */
@@ -135,73 +160,26 @@ main.main.loki-active > #mainChat { display: none !important; }
   color: var(--muted, #9aa0b4);
 }
 
-/* ── Worker-Log-Bubble (echtes Arbeitslog jedes Workers) ───────────────────── */
-/* Eine Bubble pro Task (data-task-id), idempotent aktualisiert. Body enthält den
- * geparsten Agent-Log-Verlauf + bei 'done' das Ergebnis + Artefakt-Hinweis. */
-.loki-bubble-workerlog { max-width: 92%; }
-
-/* Der scrollbare Log-Container: monospace, Whitespace erhalten, gedeckelt. */
-.loki-bubble-worker .loki-log,
-.loki-bubble-workerlog .loki-log {
-  font: 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 320px;
-  overflow-y: auto;
-  opacity: .92;
-  margin-top: 4px;
-  line-height: 1.5;
-}
-.loki-log-muted { opacity: .6; font-style: italic; }
-
-/* Aufgaben-Titel als dezente Kopfzeile im Log-Body. */
-.loki-log-task {
-  font-size: 12px; font-weight: 600; color: var(--muted, #9aa0b4);
-  margin-bottom: 4px;
-}
-
-/* Abschluss-Ergebnis bei 'done'. */
-.loki-log-result {
-  margin-top: 8px; padding-top: 8px;
-  border-top: 1px dashed var(--border, #2a2d3a);
-  font-size: 13px; line-height: 1.5;
-}
-.loki-log-result-label {
-  font-size: 11px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: .04em; color: var(--accent, #14b8a6); margin-bottom: 3px;
-}
-
-/* Dezenter Artefakt-Hinweis. */
-.loki-log-artifact {
-  margin-top: 6px; font-size: 12px; color: var(--muted, #9aa0b4);
-}
-.loki-log-artifact a { color: var(--accent, #14b8a6); }
-
-/* ── Status-Badges im Bubble-Head ── */
-.loki-log-status {
-  display: inline-block; margin-left: 6px;
-  padding: 1px 7px; border-radius: 999px;
+/* ── Status-Badge im Bubble-Head ("⚙️ tippt…", "⚠️ Fehler: …") ── */
+.loki-bubble-status {
+  display: inline-block;
+  padding: 1px 8px; border-radius: 999px;
   font-size: 10px; font-weight: 700; letter-spacing: .02em;
   vertical-align: middle;
 }
-/* arbeitet… → Akzent, dezent pulsierend. */
-.loki-log-status.loki-running {
+/* tippt… → Akzent, dezent pulsierend. */
+.loki-bubble-status.loki-status-running {
   color: var(--accent, #14b8a6);
   background: var(--accent-bg, rgba(20, 184, 166, .14));
   border: 1px solid var(--accent, #14b8a6);
   animation: loki-pulse 1.6s ease-in-out infinite;
 }
-/* fertig → grün. */
-.loki-log-status.loki-done {
-  color: #6ee7b7;
-  background: rgba(110, 231, 183, .12);
-  border: 1px solid rgba(110, 231, 183, .5);
-}
-/* blockiert → gedämpftes Rot. */
-.loki-log-status.loki-blocked {
+/* Fehler → gedämpftes Rot. */
+.loki-bubble-status.loki-status-error {
   color: #fca5a5;
   background: rgba(252, 165, 165, .12);
   border: 1px solid rgba(252, 165, 165, .5);
+  animation: none;
 }
 
 @keyframes loki-pulse {
@@ -209,8 +187,60 @@ main.main.loki-active > #mainChat { display: none !important; }
   50%      { opacity: .5; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .loki-log-status.loki-running { animation: none; }
+  .loki-bubble-status.loki-status-running { animation: none; }
+}
+
+/* ── Eingabe-Leiste (unten) ── */
+.loki-input-bar {
+  flex-shrink: 0; display: flex; align-items: flex-end; gap: 10px;
+  padding: 12px 16px; border-top: 1px solid var(--border, #2a2d3a);
+  background: var(--bg, #0b0d16);
+}
+.loki-input-wrap { position: relative; flex: 1; min-width: 0; }
+.loki-input {
+  width: 100%; box-sizing: border-box; resize: none;
+  padding: 10px 12px; min-height: 42px; max-height: 140px;
+  background: var(--input, #0e1018); color: var(--text, #e8e8ee);
+  border: 1px solid var(--border, #2a2d3a); border-radius: 10px;
+  font: 13px system-ui, sans-serif; line-height: 1.45; overflow-y: auto;
+}
+.loki-input:focus { outline: none; border-color: var(--accent, #14b8a6); }
+.loki-send { align-self: stretch; }
+
+/* ── @mention-Autocomplete-Dropdown ── */
+.loki-mention-pop {
+  position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 30;
+  min-width: 200px; max-width: 320px; max-height: 240px; overflow-y: auto;
+  background: var(--panel, #14161f); border: 1px solid var(--border, #2a2d3a);
+  border-radius: 10px; box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+  padding: 5px; display: flex; flex-direction: column; gap: 2px;
+}
+.loki-mention-item {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; text-align: left;
+  padding: 7px 9px; border: 1px solid transparent; border-radius: 7px;
+  background: transparent; color: var(--text, #e8e8ee);
+  font: 13px system-ui, sans-serif; cursor: pointer;
+}
+.loki-mention-item:hover,
+.loki-mention-item.active {
+  background: var(--accent-bg, rgba(20, 184, 166, .14));
+  border-color: var(--accent, #14b8a6);
+}
+.loki-mention-emoji {
+  width: 22px; height: 22px; flex: 0 0 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-size: 13px;
+  background: var(--input, #0e1018); border: 1px solid var(--border, #2a2d3a);
+}
+.loki-mention-name { font-weight: 600; }
+.loki-mention-handle {
+  margin-left: auto; color: var(--muted, #9aa0b4); font-size: 12px;
 }
 
 /* ── Nav-Button (Akzent-Tönung, ohne Host-Verhalten zu brechen) ── */
 .loki-nav-btn.active { color: var(--accent, #14b8a6); }
+
+/* ── Schmale Viewports: Team-Liste etwas schmaler ── */
+@media (max-width: 720px) {
+  .loki-team-list { flex-basis: 150px; width: 150px; }
+}
