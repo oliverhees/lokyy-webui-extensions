@@ -1,18 +1,23 @@
 /*
  * Lokyy OS — Loki Orchestrator Extension für Hermes WebUI (nesquena/hermes-webui)
  * --------------------------------------------------------------------------
- * "Mira dirigiert das Team" — ein Orchestrierungs-Panel für Loki OS.
+ * "Agentur am Tisch" — ein Team-Chat-Panel für Loki OS.
  *
- * Was es tut (V1):
+ * Was es tut (V2 — Team-Chat statt Kanban-Board):
  *   1. Eigener Nav-Eintrag "🐺 Loki Orchestrator" in der Rail + Sidebar-Nav.
  *   2. Mission-Eingabe: Textfeld + Orchestrator-Profil-Auswahl + "Mission starten"
- *      → POST /api/session/new → POST /api/chat/start. Der gewählte Agent zerlegt
- *      die Mission selbst (via Kanban-Toolset). Status/Reasoning live via SSE.
- *   3. Live-Team-Board: GET /api/kanban/board als Spalten
- *      (triage/todo/ready/running/blocked/done) mit Task-Karten (Titel + Worker-Badge).
- *      Live-Update via EventSource /api/kanban/events/stream (Fallback: Polling 5s).
- *   4. Dispatch-Button: POST /api/kanban/dispatch (spawnt bereitstehende Worker) + Toast.
- *   5. Robust gegen fehlende/abgeschaltete Endpoints (Kanban 404/503 → klare Meldung).
+ *      → POST /api/session/new → POST /api/chat/start. Der gewählte Agent (Mira)
+ *      zerlegt die Mission selbst (via Kanban-Toolset). Antwort live via SSE.
+ *   3. CHAT-VERLAUF statt Board: Mira + Worker erscheinen als Bubbles mit
+ *      Avatar(emoji)/Name/Farbe, chronologisch. Olivers Mission als eigene
+ *      User-Bubble, Miras Live-Antwort als Mira-Bubble, Worker-Statuswechsel
+ *      (running/done/blocked) als Worker-Bubbles. Artefakte (Bilder) inline.
+ *   4. Der Team-Verlauf wird aus dem Kanban-Board abgeleitet: GET /api/kanban/board
+ *      wird gegen einen gemerkten Task-State gediffed (seenTasks) → jede Änderung
+ *      wird zu einer Chat-Bubble. Live via EventSource /api/kanban/events/stream
+ *      (Fallback: Polling 5s).
+ *   5. Dispatch-Button "Team loslegen": POST /api/kanban/dispatch + Sync.
+ *   6. Robust gegen fehlende/abgeschaltete Endpoints (Kanban 404/503 → klare Meldung).
  *
  * ARCHITEKTUR (verifiziert gegen einen frischen Clone von nesquena/hermes-webui @ master):
  *   - Panel-Switching: Host nutzt switchPanel(name, opts) (static/panels.js:203). Bekannte
@@ -53,19 +58,33 @@
   const RAIL_BTN_ID = 'lokiRailBtn';
   const SIDEBAR_BTN_ID = 'lokiSidebarBtn';
 
-  // Feste Board-Spalten (kanban_bridge.py:23 BOARD_COLUMNS — verifiziert).
-  const COLUMNS = [
-    { key: 'triage',  label: '📥 Triage'  },
-    { key: 'todo',    label: '📋 To-Do'   },
-    { key: 'ready',   label: '✅ Ready'    },
-    { key: 'running', label: '⚙️ Running'  },
-    { key: 'blocked', label: '⛔ Blocked'  },
-    { key: 'done',    label: '🏁 Done'     },
-  ];
+  // ── Team-Mapping: Worker-Key → Avatar(emoji) + Anzeige-Label ────────────────
+  // Bekannte Loki-Worker mit fester Persönlichkeit. Unbekannte fallen auf
+  // {emoji:'🤖', label: Name mit großem Anfangsbuchstaben} zurück (siehe worker()).
+  const WORKERS = {
+    mira:   { emoji: '🧭', label: 'Mira'   },
+    tanja:  { emoji: '📱', label: 'Tanja'  },
+    peter:  { emoji: '🔍', label: 'Peter'  },
+    lars:   { emoji: '✍️', label: 'Lars'   },
+    sophia: { emoji: '📊', label: 'Sophia' },
+    nina:   { emoji: '🎨', label: 'Nina'   },
+    tom:    { emoji: '🎬', label: 'Tom'    },
+    jonas:  { emoji: '🤝', label: 'Jonas'  },
+    max:    { emoji: '🛠️', label: 'Max'    },
+    default:{ emoji: '🤖', label: 'Assistent' },
+  };
+
+  // Worker-Lookup mit Fallback. Unbekannte Keys → 🤖 + kapitalisierter Name.
+  function worker(key) {
+    const k = String(key == null ? '' : key).trim().toLowerCase();
+    if (k && WORKERS[k]) return WORKERS[k];
+    if (k) return { emoji: '🤖', label: k.charAt(0).toUpperCase() + k.slice(1) };
+    return WORKERS.default;
+  }
 
   // ── API-Wrapper: bevorzugt Host-api() (credentials:'include', static/workspace.js:1), sonst fetch. ──
   // Wichtig: window.api() löst JSON bereits auf UND wirft bei !ok einen Error mit .status
-  // (für 404/503-Branching in loadBoard/onDispatch genutzt); Fallback macht .json() + .status selbst.
+  // (für 404/503-Branching in syncTeamFromBoard/onDispatch genutzt); Fallback macht .json() + .status selbst.
   // CSRF wird NICHT hier gesetzt — der globale window.fetch-Wrapper (index.html, sameOriginUnsafe)
   // injiziert den X-Hermes-CSRF-Token in beide Pfade automatisch (nur bei aktivierter Auth nötig).
   function callApi(path, opts) {
@@ -99,11 +118,47 @@
     String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+  // ── Mini-Markdown → sicheres HTML ───────────────────────────────────────────
+  // Reihenfolge: ZUERST esc() (XSS-Schutz), DANN auf dem escapeten String die
+  // wenigen Markdown-Muster ersetzen. URLs werden nur akzeptiert, wenn sie
+  // http(s) oder relativ (/, ./, ../, ohne Schema) sind — kein javascript:/data:.
+  function safeUrl(u) {
+    const s = String(u == null ? '' : u).trim();
+    if (/^https?:\/\//i.test(s)) return s;          // absolute http(s)
+    if (/^(\/|\.\/|\.\.\/)/.test(s)) return s;       // relativ
+    if (/^[^:]+$/.test(s)) return s;                 // schemalos (z.B. "img/x.png")
+    return '#';                                       // alles mit Schema (javascript:, data:) → blockieren
+  }
+
+  function renderMd(text) {
+    let h = esc(text);
+    // Bilder ZUERST (sonst greift der Link-Regex in das ![..](..)-Muster).
+    // ![alt](url) → <img>
+    h = h.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_m, alt, url) =>
+      '<img class="loki-bubble-img" src="' + esc(safeUrl(url)) + '" alt="' + esc(alt) + '">');
+    // [text](url) → <a target="_blank">
+    h = h.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, t, url) =>
+      '<a href="' + esc(safeUrl(url)) + '" target="_blank" rel="noopener noreferrer">' + esc(t) + '</a>');
+    // **bold**
+    h = h.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    // *italic*
+    h = h.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    // Zeilenumbrüche → <br>
+    h = h.replace(/\n/g, '<br>');
+    return h;
+  }
+
   // ── State ─────────────────────────────────────────────────────────────────
-  let kanbanES = null;       // EventSource für Board-Live-Updates
+  let kanbanES = null;       // EventSource für Team-Live-Updates (Board-Diff)
   let pollTimer = null;      // Fallback-Poll-Timer
   let chatES = null;         // EventSource für Mira-Mission-Antwort
   let panelActive = false;
+
+  // Team-Chat-State.
+  let miraBubble = null;     // aktuelle Stream-Senke (Body-Element der laufenden Mira-Bubble)
+  let miraRawText = '';      // roher (un-gerenderter) Text der laufenden Mira-Bubble
+  const seenTasks = new Map(); // task-id → { status, assignee }  (für Board-Diff)
+  let teamSynced = false;    // false = erster Sync nur befüllen, keine Bubbles (keine Altlast-Flut)
 
   // ───────────────────────────────────────────────────────────────────────────
   //  PANEL-DOM
@@ -123,10 +178,10 @@
     panel.style.cssText = 'flex:1;min-height:0;min-width:0;flex-direction:column;background:var(--bg,#0b0d16);overflow:hidden;';
     panel.innerHTML = `
       <div class="loki-head">
-        <div class="loki-head-title">🐺 Loki Orchestrator <span class="loki-sub">— Mira dirigiert das Team</span></div>
+        <div class="loki-head-title">🐺 Loki Orchestrator <span class="loki-sub">— Die Agentur am Tisch</span></div>
         <div class="loki-head-actions">
-          <button type="button" class="loki-btn-ghost" id="lokiRefreshBtn" title="Board neu laden">⟳ Board</button>
-          <button type="button" class="loki-btn-primary" id="lokiDispatchBtn" title="Bereitstehende Worker spawnen">🚀 Dispatch</button>
+          <button type="button" class="loki-btn-ghost" id="lokiRefreshBtn" title="Team-Verlauf neu abgleichen">⟳ Sync</button>
+          <button type="button" class="loki-btn-primary" id="lokiDispatchBtn" title="Bereitstehende Worker spawnen">🚀 Team loslegen</button>
         </div>
       </div>
 
@@ -138,24 +193,66 @@
           <button type="button" class="loki-btn-primary loki-mission-go" id="lokiMissionGo">▶ Mission starten</button>
         </div>
         <textarea id="lokiMissionText" class="loki-mission-text" rows="3"
-          placeholder="Mission für den Orchestrator… z.B. 'Plane ein Launch-Video: Recherche, Skript, Thumbnail. Lege die Teilaufgaben als Kanban-Tasks an und weise Worker zu.'"></textarea>
-        <div id="lokiMissionStatus" class="loki-mission-status" hidden></div>
-        <div id="lokiMissionStream" class="loki-mission-stream" hidden></div>
+          placeholder="Mission für dein Team… z.B. 'Plane ein Launch-Video: Recherche, Skript, Thumbnail. Lege die Teilaufgaben als Kanban-Tasks an und weise Worker zu.'"></textarea>
       </div>
 
-      <div class="loki-board-wrap">
-        <div id="lokiBoard" class="loki-board">
-          <div class="loki-board-loading">Board lädt…</div>
-        </div>
+      <div id="lokiChat" class="loki-chat">
+        <div class="loki-chat-empty">Gib deinem Team oben eine Mission — Mira verteilt sie ans Team.</div>
       </div>`;
 
     main.appendChild(panel);
 
-    panel.querySelector('#lokiRefreshBtn').addEventListener('click', () => loadBoard());
+    panel.querySelector('#lokiRefreshBtn').addEventListener('click', () => syncTeamFromBoard());
     panel.querySelector('#lokiDispatchBtn').addEventListener('click', onDispatch);
     panel.querySelector('#lokiMissionGo').addEventListener('click', onMissionStart);
 
     return panel;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  //  CHAT-BUBBLES
+  // ───────────────────────────────────────────────────────────────────────────
+  // appendBubble(speakerKey, html, kind):
+  //   - erzeugt <div class="loki-bubble loki-bubble-<kind>"> mit Avatar(emoji)+Name-Header + Body(html)
+  //   - hängt an #lokiChat an, scrollt ans Ende, gibt das Body-Element zurück.
+  //   - kind ∈ {'user','mira','worker','system'}.
+  //   - 'user' (Olivers Mission): KEIN Worker-Avatar-Lookup, Label "Du".
+  function appendBubble(speakerKey, html, kind) {
+    const chat = document.getElementById('lokiChat');
+    if (!chat) return null;
+    // Leerzustand entfernen, sobald die erste echte Bubble kommt.
+    const empty = chat.querySelector('.loki-chat-empty');
+    if (empty) empty.remove();
+
+    const k = kind || 'worker';
+    let emoji, label;
+    if (k === 'user') {
+      emoji = '🧑'; label = 'Du';
+    } else if (k === 'system') {
+      emoji = 'ℹ️'; label = 'System';
+    } else {
+      const w = worker(k === 'mira' ? 'mira' : speakerKey);
+      emoji = w.emoji; label = w.label;
+    }
+
+    const bubble = document.createElement('div');
+    bubble.className = 'loki-bubble loki-bubble-' + k;
+
+    // System-Bubbles sind zentriert, kompakt, ohne Avatar.
+    if (k === 'system') {
+      bubble.innerHTML = '<div class="loki-bubble-body">' + html + '</div>';
+    } else {
+      bubble.innerHTML =
+        '<div class="loki-avatar">' + esc(emoji) + '</div>' +
+        '<div class="loki-bubble-card">' +
+          '<div class="loki-bubble-head">' + esc(label) + '</div>' +
+          '<div class="loki-bubble-body">' + html + '</div>' +
+        '</div>';
+    }
+
+    chat.appendChild(bubble);
+    chat.scrollTop = chat.scrollHeight;
+    return bubble.querySelector('.loki-bubble-body');
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -226,9 +323,7 @@
     // nav-active re-asserten (Host kennt 'loki' nicht, setzt es nicht aktiv).
     document.querySelectorAll('[data-panel]').forEach((t) =>
       t.classList.toggle('active', t.dataset.panel === PANEL_NAME));
-    startBoardLive();
-    loadProfiles();
-    loadBoard();
+    initTeamChat();
   }
 
   function hidePanel() {
@@ -237,10 +332,10 @@
     const main = document.querySelector('main.main');
     if (main) main.classList.remove('loki-active');
     panelActive = false;
-    stopBoardLive();
+    stopTeamLive();
     // Mission-Live-Stream (chat/stream SSE) ebenfalls schließen — sonst bleibt die
     // Verbindung beim Wegnavigieren vor stream_end offen (Ressourcen-Leak),
-    // analog zum kanbanES-Cleanup in stopBoardLive().
+    // analog zum kanbanES-Cleanup in stopTeamLive().
     if (chatES) { try { chatES.close(); } catch (_) {} chatES = null; }
   }
 
@@ -294,6 +389,12 @@
           const badge = p.gateway_running ? ' ●' : '';
           return `<option value="${esc(name)}"${isActive ? ' selected' : ''}>${esc(name)}${badge}</option>`;
         }).join('');
+        // Orchestrator-Default: 'mira' bevorzugen, falls vorhanden.
+        const hasMira = profiles.some((p) => String(p.name).toLowerCase() === 'mira');
+        if (hasMira) {
+          const opt = Array.from(sel.options).find((o) => o.value.toLowerCase() === 'mira');
+          if (opt) sel.value = opt.value;
+        }
       })
       .catch(() => {
         // Fallback: Assignees (bereits genutzte Worker-Namen), kein harter Fehler.
@@ -310,22 +411,6 @@
   // ───────────────────────────────────────────────────────────────────────────
   //  MISSION STARTEN  (session/new → chat/start → chat/stream SSE)
   // ───────────────────────────────────────────────────────────────────────────
-  function setMissionStatus(msg, kind) {
-    const el = document.getElementById('lokiMissionStatus');
-    if (!el) return;
-    el.hidden = false;
-    el.className = 'loki-mission-status loki-status-' + (kind || 'info');
-    el.textContent = msg;
-  }
-
-  function appendStream(text) {
-    const el = document.getElementById('lokiMissionStream');
-    if (!el) return;
-    el.hidden = false;
-    el.textContent += text;
-    el.scrollTop = el.scrollHeight;
-  }
-
   async function onMissionStart() {
     const textEl = document.getElementById('lokiMissionText');
     const profEl = document.getElementById('lokiProfileSelect');
@@ -336,9 +421,15 @@
 
     goBtn.disabled = true;
     goBtn.textContent = '… startet';
-    const streamEl = document.getElementById('lokiMissionStream');
-    if (streamEl) { streamEl.textContent = ''; streamEl.hidden = true; }
-    setMissionStatus('Session wird angelegt…', 'info');
+
+    // (a) Mission als USER-Bubble (Olivers Auftrag an das Team).
+    appendBubble(null, renderMd(message), 'user');
+    // Textfeld leeren — der Auftrag steht jetzt im Verlauf.
+    if (textEl) textEl.value = '';
+
+    // (b) Leere MIRA-Bubble anlegen und deren Body als Stream-Senke merken.
+    miraRawText = '';
+    miraBubble = appendBubble('mira', '<span class="loki-typing">Mira denkt nach…</span>', 'mira');
 
     try {
       // 1) Session anlegen (Voraussetzung für chat/start).
@@ -351,8 +442,7 @@
       const sessionId = sess && sess.session && sess.session.session_id;
       if (!sessionId) throw new Error('keine session_id erhalten');
 
-      // 2) Mission an den Orchestrator-Agent.
-      setMissionStatus('Mission an Orchestrator…', 'info');
+      // 2) Mission an den Orchestrator-Agent (Mira).
       const startPayload = { session_id: sessionId, message };
       if (profile && profile !== 'default') startPayload.profile = profile;
       const started = await callApi('/api/chat/start', {
@@ -365,16 +455,26 @@
       const streamId = started && started.stream_id;
       if (!streamId) throw new Error('keine stream_id erhalten');
 
-      setMissionStatus('Mira arbeitet — Live-Antwort:', 'ok');
       attachChatStream(streamId);
       toast('Mission gestartet', 'success');
     } catch (e) {
-      setMissionStatus('Mission fehlgeschlagen: ' + (e && e.message ? e.message : e), 'err');
+      const m = e && e.message ? e.message : e;
+      appendBubble(null, 'Mission fehlgeschlagen: ' + esc(m), 'system');
       toast('Mission fehlgeschlagen', 'error');
+      miraBubble = null;
     } finally {
       goBtn.disabled = false;
       goBtn.textContent = '▶ Mission starten';
     }
+  }
+
+  // Inkrementell Text an die laufende Mira-Bubble anhängen (roh sammeln, dann renderMd).
+  function appendToMira(text) {
+    if (!miraBubble) return;
+    miraRawText += text;
+    miraBubble.innerHTML = renderMd(miraRawText);
+    const chat = document.getElementById('lokiChat');
+    if (chat) chat.scrollTop = chat.scrollHeight;
   }
 
   function attachChatStream(streamId) {
@@ -383,20 +483,23 @@
     const url = '/api/chat/stream?stream_id=' + encodeURIComponent(streamId);
     let es;
     try { es = new EventSource(url, { withCredentials: true }); }
-    catch (_) { setMissionStatus('Live-Stream nicht verfügbar (Antwort läuft serverseitig).', 'info'); return; }
+    catch (_) { appendBubble(null, 'Live-Stream nicht verfügbar (Antwort läuft serverseitig).', 'system'); return; }
     chatES = es;
 
-    // Text-Deltas + Reasoning live anzeigen.
+    // Text-Deltas + Reasoning live in die Mira-Bubble.
     es.addEventListener('token', (ev) => {
-      try { const d = JSON.parse(ev.data); if (d && d.text) appendStream(d.text); } catch (_) {}
+      try { const d = JSON.parse(ev.data); if (d && d.text) appendToMira(d.text); } catch (_) {}
     });
     es.addEventListener('reasoning', (ev) => {
-      try { const d = JSON.parse(ev.data); if (d && d.text) appendStream(d.text); } catch (_) {}
+      try { const d = JSON.parse(ev.data); if (d && d.text) appendToMira(d.text); } catch (_) {}
     });
     es.addEventListener('tool', (ev) => {
       try {
         const d = JSON.parse(ev.data);
-        if (d && d.name) appendStream('\n[tool: ' + d.name + ']\n');
+        if (d && d.name) {
+          // Dezente Tool-Zeile in der laufenden Mira-Bubble.
+          appendToMira('\n[nutzt ' + d.name + ']\n');
+        }
       } catch (_) {}
     });
     es.addEventListener('apperror', (ev) => {
@@ -406,19 +509,21 @@
         // — deshalb message/label/details lesen (d.error nur als Altfall-Fallback).
         const d = JSON.parse(ev.data);
         const m = d && (d.message || d.label || d.details || d.error);
-        setMissionStatus('Agent-Fehler: ' + (m || 'unbekannt'), 'err');
+        appendBubble(null, 'Agent-Fehler: ' + esc(m || 'unbekannt'), 'system');
       } catch (_) {}
     });
     es.addEventListener('stream_end', () => {
-      setMissionStatus('Mission abgeschlossen. Board zeigt die erzeugten Tasks.', 'ok');
       try { es.close(); } catch (_) {}
       chatES = null;
-      loadBoard();
+      miraBubble = null;
+      appendBubble(null, 'Mira hat die Aufgabe verteilt.', 'system');
+      // Board-Diff anstoßen → die erzeugten Tasks erscheinen als Team-Bubbles.
+      syncTeamFromBoard();
     });
     es.onerror = () => {
       // SSE bricht auch bei normalem Streamende ab — nicht als harten Fehler werten.
-      // Board trotzdem aktualisieren.
-      loadBoard();
+      // Team-Verlauf trotzdem abgleichen.
+      syncTeamFromBoard();
     };
   }
 
@@ -434,100 +539,121 @@
         // Feld-AGNOSTISCH: das Antwort-Shape von kb.dispatch_once ist library-seitig
         // (hermes_cli) und NICHT verlässlich verifizierbar — die Logik hängt von KEINEM
         // Antwortfeld ab. Verlässliche Rückmeldung sind die echten 'running'-Tasks im
-        // Board, das wir gleich neu laden. Falls die Antwort DOCH ein plausibles
+        // Board, das wir gleich neu abgleichen. Falls die Antwort DOCH ein plausibles
         // Zähler-Feld liefert, erwähnen wir es rein OPPORTUNISTISCH im Toast.
         const n = (r && typeof r === 'object' && typeof r.spawned === 'number') ? r.spawned : null;
         toast('Dispatch ausgelöst' + (n != null ? ' — ' + n + ' Worker gespawnt' : ''), 'success');
-        loadBoard();
+        syncTeamFromBoard();
       })
       .catch((e) => {
         const s = e && e.status;
         if (s === 404 || s === 503) toast('Kanban/Dispatch nicht verfügbar', 'error');
         else toast('Dispatch fehlgeschlagen', 'error');
       })
-      .finally(() => { if (btn) { btn.disabled = false; btn.textContent = '🚀 Dispatch'; } });
+      .finally(() => { if (btn) { btn.disabled = false; btn.textContent = '🚀 Team loslegen'; } });
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  //  BOARD RENDERN
+  //  TEAM-VERLAUF AUS BOARD ABLEITEN  (Board-Diff → Chat-Bubbles)
   // ───────────────────────────────────────────────────────────────────────────
-  function renderBoardError(msg) {
-    const board = document.getElementById('lokiBoard');
-    if (!board) return;
-    board.classList.add('loki-board-haserror');
-    board.innerHTML = `<div class="loki-board-error">
-      <div class="loki-board-error-title">⚠️ Board nicht verfügbar</div>
-      <div class="loki-board-error-sub">${esc(msg)}</div>
-      <div class="loki-board-error-hint">Stelle sicher, dass dieses Hermes mit aktivem Kanban-Bridge läuft
-        (Endpoint <code>/api/kanban/board</code>). Voraussetzung: ein Orchestrator-Profil mit Kanban-Toolset.</div>
-    </div>`;
-  }
-
-  function taskCard(task) {
-    const title = esc(task.title || '(ohne Titel)');
-    const worker = task.assignee ? `<span class="loki-worker">👤 ${esc(task.assignee)}</span>` : `<span class="loki-worker loki-worker-none">nicht zugewiesen</span>`;
-    const prio = (task.priority != null && task.priority !== 0) ? `<span class="loki-prio">P${esc(task.priority)}</span>` : '';
-    const meta = [];
-    if (task.comment_count) meta.push('💬 ' + esc(task.comment_count));
-    if (task.link_counts && (task.link_counts.parents || task.link_counts.children)) {
-      meta.push('🔗 ' + esc((task.link_counts.parents || 0) + (task.link_counts.children || 0)));
-    }
-    const metaHtml = meta.length ? `<div class="loki-card-meta">${meta.join(' · ')}</div>` : '';
-    return `<div class="loki-card" data-task-id="${esc(task.id)}">
-      <div class="loki-card-title">${title}${prio}</div>
-      <div class="loki-card-foot">${worker}</div>
-      ${metaHtml}
-    </div>`;
-  }
-
-  function renderBoard(data) {
-    const board = document.getElementById('lokiBoard');
-    if (!board) return;
-    board.classList.remove('loki-board-haserror');
-
-    // Spalten aus der Antwort indizieren (Reihenfolge fix via COLUMNS).
-    const colMap = {};
-    ((data && data.columns) || []).forEach((c) => { colMap[c.name] = c.tasks || []; });
-
-    board.innerHTML = COLUMNS.map((col) => {
-      const tasks = colMap[col.key] || [];
-      const cards = tasks.length
-        ? tasks.map(taskCard).join('')
-        : '<div class="loki-col-empty">—</div>';
-      return `<div class="loki-col" data-col="${esc(col.key)}">
-        <div class="loki-col-head">${col.label}<span class="loki-col-count">${tasks.length}</span></div>
-        <div class="loki-col-body">${cards}</div>
-      </div>`;
-    }).join('');
-  }
-
-  function loadBoard() {
+  // syncTeamFromBoard():
+  //   - lädt /api/kanban/board, sammelt alle Tasks flach (status = column.name),
+  //   - diffed gegen seenTasks (Map id → {status, assignee}),
+  //   - erzeugt pro ÄNDERUNG eine Bubble (siehe Übergangsregeln unten),
+  //   - aktualisiert seenTasks danach.
+  //   Erster Aufruf nach Panel-Öffnen (teamSynced=false): NUR befüllen, keine Bubbles.
+  function syncTeamFromBoard() {
     if (!panelActive) return;
     callApi('/api/kanban/board')
       .then((data) => {
         if (!data || !Array.isArray(data.columns)) {
-          renderBoardError('Unerwartete Antwort vom Board-Endpoint.');
+          // Unerwartete Antwort — beim allerersten Sync stumm, sonst dezenter Hinweis.
+          if (teamSynced) appendBubble(null, 'Unerwartete Antwort vom Board-Endpoint.', 'system');
           return;
         }
-        renderBoard(data);
+
+        // Alle Tasks flach sammeln; status = Spaltenname.
+        const flat = [];
+        data.columns.forEach((col) => {
+          const status = col && col.name;
+          (col && col.tasks || []).forEach((t) => {
+            flat.push({
+              id: t.id,
+              title: t.title || '(ohne Titel)',
+              status: status,
+              assignee: t.assignee || '',
+            });
+          });
+        });
+
+        // Erster Sync: nur State befüllen, KEINE Bubbles (keine Altlast-Flut).
+        if (!teamSynced) {
+          flat.forEach((t) => seenTasks.set(t.id, { status: t.status, assignee: t.assignee }));
+          teamSynced = true;
+          return;
+        }
+
+        // Diffen: für jede Änderung eine passende Bubble.
+        flat.forEach((t) => {
+          const prev = seenTasks.get(t.id);
+          const wLabel = t.assignee ? worker(t.assignee).label : '';
+
+          if (!prev) {
+            // NEU. Mit Assignee → Mira verteilt sichtbar an den Worker.
+            if (t.assignee) {
+              appendBubble('mira',
+                renderMd('🧭 Mira → ' + wLabel + ': „' + t.title + '"'), 'mira');
+            }
+          } else {
+            // Statuswechsel?
+            if (prev.status !== t.status) {
+              if (t.status === 'running') {
+                appendBubble(t.assignee || 'default',
+                  renderMd((wLabel ? wLabel + ': ' : '') + 'Ich übernehme „' + t.title + '"…'), 'worker');
+              } else if (t.status === 'done') {
+                appendBubble(t.assignee || 'default',
+                  renderMd('✅ „' + t.title + '" erledigt.'), 'worker');
+              } else if (t.status === 'blocked') {
+                appendBubble(t.assignee || 'default',
+                  renderMd('⛔ „' + t.title + '" blockiert.'), 'worker');
+              }
+            }
+          }
+
+          seenTasks.set(t.id, { status: t.status, assignee: t.assignee });
+        });
       })
       .catch((e) => {
         const s = e && e.status;
-        if (s === 404 || s === 503) renderBoardError('Kanban-Bridge ist auf diesem Hermes nicht aktiv (HTTP ' + s + ').');
-        else renderBoardError('Konnte das Board nicht laden (' + (e && e.message ? e.message : 'Netzwerk/Session') + ').');
+        // Beim allerersten Sync still bleiben (Panel gerade geöffnet, evtl. kein Kanban).
+        if (!teamSynced) { teamSynced = true; return; }
+        if (s === 404 || s === 503) {
+          appendBubble(null, 'Kanban-Bridge ist auf diesem Hermes nicht aktiv (HTTP ' + s + ').', 'system');
+        }
+        // Andere Netzfehler bei Live-Sync schlucken wir leise (Polling versucht es erneut).
       });
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  //  TEAM-CHAT INIT
+  // ───────────────────────────────────────────────────────────────────────────
+  function initTeamChat() {
+    loadProfiles();
+    teamSynced = false;        // erster Sync nach Öffnen nur befüllen, keine Bubbles
+    startTeamLive();
+    syncTeamFromBoard();
   }
 
   // ───────────────────────────────────────────────────────────────────────────
   //  LIVE-UPDATES  (EventSource /api/kanban/events/stream, Fallback Polling 5s)
   // ───────────────────────────────────────────────────────────────────────────
-  function startBoardLive() {
-    stopBoardLive();
+  function startTeamLive() {
+    stopTeamLive();
     if (typeof EventSource === 'function') {
       try {
         kanbanES = new EventSource('/api/kanban/events/stream', { withCredentials: true });
-        // Jedes events-Frame signalisiert Board-Änderung → neu laden (debounced).
-        kanbanES.addEventListener('events', () => scheduleBoardReload());
+        // Jedes events-Frame signalisiert Board-Änderung → Team-Verlauf abgleichen (debounced).
+        kanbanES.addEventListener('events', () => scheduleTeamReload());
         kanbanES.addEventListener('hello', () => { /* Verbindung offen */ });
         kanbanES.onerror = () => {
           // Stream tot/abgewiesen → auf Polling zurückfallen.
@@ -541,17 +667,17 @@
   }
 
   let reloadPending = null;
-  function scheduleBoardReload() {
+  function scheduleTeamReload() {
     if (reloadPending) return;
-    reloadPending = setTimeout(() => { reloadPending = null; loadBoard(); }, 250);
+    reloadPending = setTimeout(() => { reloadPending = null; syncTeamFromBoard(); }, 250);
   }
 
   function startPolling() {
     if (pollTimer) return;
-    pollTimer = setInterval(() => { if (panelActive) loadBoard(); }, 5000);
+    pollTimer = setInterval(() => { if (panelActive) syncTeamFromBoard(); }, 5000);
   }
 
-  function stopBoardLive() {
+  function stopTeamLive() {
     if (kanbanES) { try { kanbanES.close(); } catch (_) {} kanbanES = null; }
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     if (reloadPending) { clearTimeout(reloadPending); reloadPending = null; }
