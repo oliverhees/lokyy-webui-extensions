@@ -3,7 +3,7 @@
  * --------------------------------------------------------------------------
  * "Agentur am Tisch" — ein Team-Chat-Panel für Loki OS.
  *
- * Was es tut (V3 — Mission als Kanban-Triage-Task statt Solo-Chat):
+ * Was es tut (V4 — echtes Arbeitslog jedes Workers, nicht nur Status-Übergänge):
  *   1. Eigener Nav-Eintrag "🐺 Loki Orchestrator" in der Rail + Sidebar-Nav.
  *   2. Mission-Eingabe: Textfeld + Orchestrator-Profil-Auswahl + "Mission starten"
  *      → POST /api/kanban/tasks { title, body, triage:true }. Die Mission landet als
@@ -19,8 +19,20 @@
  *      wird zu einer Chat-Bubble. Live via EventSource /api/kanban/events/stream
  *      (Fallback: Polling 5s). So erscheinen auch die per auto_decompose entstehenden
  *      Subtasks als Worker-Bubbles.
- *   5. Dispatch-Button "Team loslegen": POST /api/kanban/dispatch + Sync.
- *   6. Robust gegen fehlende/abgeschaltete Endpoints (Kanban 404/503 → klare Meldung).
+ *   5. NEU (V4): ECHTES WORKER-ARBEITSLOG. Pro Worker-Task wird zusätzlich zur
+ *      Delegations-Bubble eine LOG-Bubble (data-task-id) gepflegt, die zeigt, was der
+ *      Worker TATSÄCHLICH tut — Denk-/Redetexte aus den ⚕-Hermes-Boxen + kompakte
+ *      [nutzt <tool>]-Marker. Quelle: GET /api/kanban/tasks/<id>/log (volles Agent-Log).
+ *      Die Bubble wächst LIVE mit (4s-Schnellpoll solange ein Task 'running' ist) und
+ *      wird IDEMPOTENT aktualisiert (kein Bubble-Flood). Bei 'done' kommt task.result
+ *      als Abschluss dazu, Artefakt-Hinweise werden dezent erwähnt.
+ *   6. Dispatch-Button "Team loslegen": POST /api/kanban/dispatch + Sync.
+ *   7. Robust gegen fehlende/abgeschaltete Endpoints (Kanban 404/503 → klare Meldung).
+ *
+ * VERIFIZIERTE ENDPOINTS (echter hermes-webui-Code):
+ *   - GET /api/kanban/board           → { columns:[{name, tasks:[{id,title,assignee,status,...}]}] } (status = Spaltenname)
+ *   - GET /api/kanban/tasks/<id>       → { task:{ id,title,assignee,status,result,progress,last_heartbeat_at,... } }
+ *   - GET /api/kanban/tasks/<id>/log   → { task_id, exists, size_bytes, content, truncated }  (content = volles Agent-Log als Text)
  *
  * ARCHITEKTUR (verifiziert gegen einen frischen Clone von nesquena/hermes-webui @ master):
  *   - Panel-Switching: Host nutzt switchPanel(name, opts) (static/panels.js:203). Bekannte
@@ -34,7 +46,7 @@
  *     main.main > #mainXxx{display:none} versteckt (style.css:3092-3101); für ein
  *     unbekanntes 'loki' gäbe es keine solche Regel. Deshalb eigene Klasse
  *     .loki-orchestrator-panel + [hidden]-Toggle (CSS-Datei + Inline-Fallback) und
- *     main.main.loki-active > #mainChat{display:none} (loki-orchestrator.css:21), damit
+ *     main.main.loki-active > #mainChat{display:none} (loki-orchestrator.css:24), damit
  *     der Chat-Default nach dem showing-*-Strip nicht durchscheint.
  *   - API-Aufrufe via window.api() (static/workspace.js:1, credentials:'include', wirft
  *     Errors mit .status für 404/503-Branching), Fallback same-origin fetch. CSRF: ein
@@ -45,8 +57,7 @@
  *     (:1164); Payload _create_task_payload (:306) { title<REQUIRED>, body, triage:true };
  *     Antwort { task:{ id, title, status, ... } } (status wird 'triage').
  *   - showToast-Signatur VERIFIZIERT: showToast(msg, ms, type) (static/ui.js:4130) — type
- *     ist der 3. Parameter, ms (2.) ist die Auto-Dismiss-Dauer. Alle drei Lokyy-Extensions
- *     (loki-orchestrator, agent-importer, mcp-manager) verwenden jetzt dieselbe 3-arg-Form.
+ *     ist der 3. Parameter, ms (2.) ist die Auto-Dismiss-Dauer.
  *
  * Rein additiv. Idempotent. Kein Core-Fork.
  */
@@ -110,7 +121,6 @@
   // gegengeprüft). Wir übersetzen hier zentral type→ms+type, sodass die internen
   // toast(msg,'error'/'success'/'info')-Aufrufe unverändert bleiben können. So landet der
   // type-String NICHT im ms-Parameter (Auto-Dismiss-Timer + Einfärbung bleiben korrekt).
-  // Identische 3-arg-Form in agent-importer.js und mcp-manager.js.
   function toast(msg, type) {
     const ms = type === 'error' ? 5000 : 3000;
     if (typeof window.showToast === 'function') window.showToast(msg, ms, type);
@@ -153,12 +163,26 @@
 
   // ── State ─────────────────────────────────────────────────────────────────
   let kanbanES = null;       // EventSource für Team-Live-Updates (Board-Diff)
-  let pollTimer = null;      // Fallback-Poll-Timer
+  let pollTimer = null;      // Fallback-Poll-Timer (5s, Board-Diff)
+  let fastLogTimer = null;   // Schnell-Poll (4s) für Worker-Logs solange etwas läuft
   let panelActive = false;
 
   // Team-Chat-State.
   const seenTasks = new Map(); // task-id → { status, assignee }  (für Board-Diff)
   let teamSynced = false;    // false = erster Sync nur befüllen, keine Bubbles (keine Altlast-Flut)
+
+  // Worker-Log-State.
+  //  - workerLogIds: Set der Task-IDs, die WÄHREND der offenen Sitzung neu running/done
+  //    geworden sind → NUR diese bekommen Log-Bubbles (Erstsync-Schutz, kein Aufreißen
+  //    alter done-Tasks beim Panel-Öffnen).
+  //  - workerLogBaseline: Set der Task-IDs, die beim ersten Board-Sync schon running/done
+  //    waren (Altlast) → werden NICHT als frische Log-Bubbles gezeigt.
+  //  - lastLogSig: task-id → Signatur des zuletzt gerenderten Log-Inhalts (verhindert
+  //    unnötige DOM-Updates und unnötiges Scrollen).
+  const workerLogIds = new Set();
+  const workerLogBaseline = new Set();
+  let workerBaselineReady = false;
+  const lastLogSig = new Map();
 
   // ───────────────────────────────────────────────────────────────────────────
   //  PANEL-DOM
@@ -202,7 +226,7 @@
 
     main.appendChild(panel);
 
-    panel.querySelector('#lokiRefreshBtn').addEventListener('click', () => syncTeamFromBoard());
+    panel.querySelector('#lokiRefreshBtn').addEventListener('click', () => { syncTeamFromBoard(); refreshWorkerLogs(); });
     panel.querySelector('#lokiDispatchBtn').addEventListener('click', onDispatch);
     panel.querySelector('#lokiMissionGo').addEventListener('click', onMissionStart);
 
@@ -253,6 +277,343 @@
     chat.appendChild(bubble);
     chat.scrollTop = chat.scrollHeight;
     return bubble.querySelector('.loki-bubble-body');
+  }
+
+  // Hilfsfunktion: ist der Chat-Verlauf gerade (nahezu) ganz unten gescrollt?
+  // Für sanftes Auto-Scroll der Log-Bubbles: nur nachscrollen, wenn der Nutzer
+  // nicht gerade weiter oben liest.
+  function chatAtBottom(chat) {
+    if (!chat) return true;
+    return (chat.scrollHeight - chat.scrollTop - chat.clientHeight) < 60;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  //  WORKER-LOG: PARSER
+  // ───────────────────────────────────────────────────────────────────────────
+  // parseAgentLog(content) → lesbarer Klartext-Verlauf des Agent-Logs.
+  //
+  // Das Hermes-CLI/TUI-Log enthält:
+  //   (a) Denk-/Redetext in Boxen:  ╭─ ⚕ Hermes ───╮ \n    <eingerückter Text> \n ╰────╯
+  //   (b) Tool-Aktivität:           "  ┊ 📋 preparing kanban_show…"  /  "  ┊ ⚡ kanban_sh   0.0s"
+  //
+  // Wir extrahieren (a) als Absätze (Box-Zeichen + führende ⚕/Hermes entfernt) und (b)
+  // als kompakte Marker "[nutzt <tool>]". Reihenfolge bleibt erhalten. Am Ende: die
+  // letzten ~40 sinnvollen Zeilen.
+  //
+  // Robust: Erkennt der Box-/Tool-Parser nichts Sinnvolles, fällt die Funktion auf
+  // "Roh-Content, nur Box-Zeichen entfernt + letzte 40 Zeilen" zurück.
+  const BOX_CHARS_RE = /[╭╮╰╯─│┊]/g;
+  // Box-Start: Zeile, die mit Rahmen-Ecke beginnt und ⚕/Hermes-Marker enthält.
+  const BOX_TOP_RE = /^[ \t]*╭.*$/;
+  const BOX_BOTTOM_RE = /^[ \t]*╰.*$/;
+  // Tool-Zeilen: "┊ <emoji> preparing <tool>…"  oder  "┊ ⚡ <tool>   0.0s"
+  const TOOL_PREP_RE = /┊\s*\S*\s*preparing\s+([A-Za-z0-9_.\-]+)/;
+  const TOOL_RUN_RE = /┊\s*⚡\s*([A-Za-z0-9_.\-]+)/;
+
+  function stripBoxChars(s) {
+    return String(s == null ? '' : s).replace(BOX_CHARS_RE, '').trim();
+  }
+
+  function parseAgentLog(content) {
+    const raw = String(content == null ? '' : content);
+    if (!raw.trim()) return '';
+
+    const lines = raw.split(/\r?\n/);
+    const steps = [];          // gesammelte Verlaufszeilen (Denktext-Absätze + [nutzt X])
+    let inBox = false;
+    let boxBuf = [];           // gesammelte Textzeilen der aktuellen ⚕-Box
+    let lastTool = null;       // De-Dupe gegen "preparing X" gefolgt von "⚡ X"
+    let matchedAnything = false;
+
+    const flushBox = () => {
+      if (!boxBuf.length) { boxBuf = []; return; }
+      // Box-Text zusammenfügen, führende ⚕/Hermes-Marker entfernen, normalisieren.
+      let text = boxBuf
+        .map((l) => stripBoxChars(l))
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      // Führendes "⚕ Hermes" / "Hermes" / "⚕" am Anfang entfernen (Box-Titel).
+      text = text.replace(/^(?:⚕\s*)?Hermes[:：]?\s*/i, '').replace(/^⚕\s*/, '').trim();
+      if (text) { steps.push(text); matchedAnything = true; }
+      boxBuf = [];
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Box-Grenzen erkennen.
+      if (BOX_TOP_RE.test(line)) {
+        // Neue Box beginnt → evtl. offene Box vorher schließen.
+        if (inBox) flushBox();
+        inBox = true;
+        lastTool = null;
+        continue;
+      }
+      if (BOX_BOTTOM_RE.test(line)) {
+        if (inBox) { flushBox(); inBox = false; }
+        continue;
+      }
+
+      // Tool-Zeilen: auch INNERHALB einer Box können Tool-Marker auftauchen
+      // (in der Praxis stehen sie zwischen den Boxen). Beide Fälle behandeln.
+      const prep = line.match(TOOL_PREP_RE);
+      const run = line.match(TOOL_RUN_RE);
+      if (prep || run) {
+        // Falls gerade eine Box offen ist, deren Text erst sichern.
+        if (inBox) { flushBox(); /* Box bleibt offen für Folgetext */ }
+        const tool = (prep && prep[1]) || (run && run[1]) || '';
+        if (tool && tool !== lastTool) {
+          steps.push('[nutzt ' + tool + ']');
+          lastTool = tool;
+          matchedAnything = true;
+        }
+        continue;
+      }
+
+      if (inBox) {
+        // Innerhalb der Box → Textzeile sammeln (sofern nach Strip etwas übrig bleibt).
+        const t = stripBoxChars(line);
+        if (t) boxBuf.push(line);
+      }
+    }
+    // Falls am Ende noch eine Box offen ist.
+    if (inBox) flushBox();
+
+    let out;
+    if (matchedAnything && steps.length) {
+      out = steps;
+    } else {
+      // ── FALLBACK: unbekanntes Format ──
+      // Roh-Content, nur Box-Zeichen entfernen, leere Zeilen verwerfen.
+      out = lines
+        .map((l) => stripBoxChars(l))
+        .filter((l) => l.length > 0);
+    }
+
+    // Nur die letzten ~40 sinnvollen Zeilen behalten (Bubble bleibt lesbar).
+    if (out.length > 40) out = out.slice(-40);
+    return out.join('\n');
+  }
+
+  // Erkennt einen dezenten Artefakt-/Datei-/Bild-Hinweis im Text (für die done-Bubble).
+  // Gibt das gefundene Pfad-/URL-Fragment zurück oder null. Rein heuristisch & defensiv.
+  function detectArtifactHint(text) {
+    const s = String(text == null ? '' : text);
+    // Markdown-Bild zuerst.
+    const mdImg = s.match(/!\[[^\]]*\]\(([^)\s]+)\)/);
+    if (mdImg) return mdImg[1];
+    // http(s)-URL auf eine Datei-Endung.
+    const url = s.match(/https?:\/\/\S+\.(?:png|jpe?g|gif|webp|svg|pdf|mp4|mov|zip|md|txt|json|csv)/i);
+    if (url) return url[0];
+    // Lokaler Pfad mit Datei-Endung.
+    const path = s.match(/[\w./~-]+\.(?:png|jpe?g|gif|webp|svg|pdf|mp4|mov|zip|md|txt|json|csv)/i);
+    if (path) return path[0];
+    return null;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  //  WORKER-LOG: BUBBLE (idempotent, eine pro Task)
+  // ───────────────────────────────────────────────────────────────────────────
+  // upsertWorkerBubble(taskId, speakerKey, status, bodyHtml):
+  //   - sucht eine vorhandene .loki-bubble[data-task-id=<taskId>] ODER legt EINE neue an
+  //     (via appendBubble-Mechanik, kind 'worker') und markiert sie mit data-task-id.
+  //   - aktualisiert NUR den Body (kein Bubble-Flood bei wiederholtem Poll).
+  //   - Kopfzeile: WorkerLabel + Status-Indikator (⚙️ arbeitet… / ✅ fertig / ⛔ blockiert).
+  //   - bodyHtml MUSS bereits sicher escaped/gerendert sein (XSS-Schutz beim Aufrufer).
+  //   - scrollt ans Ende NUR wenn der Nutzer schon (nahezu) unten ist.
+  function upsertWorkerBubble(taskId, speakerKey, status, bodyHtml) {
+    const chat = document.getElementById('lokiChat');
+    if (!chat) return null;
+    const id = String(taskId == null ? '' : taskId);
+    if (!id) return null;
+
+    const empty = chat.querySelector('.loki-chat-empty');
+    if (empty) empty.remove();
+
+    const w = worker(speakerKey);
+    let badge, badgeClass;
+    if (status === 'done') { badge = '✅ fertig'; badgeClass = 'loki-done'; }
+    else if (status === 'blocked') { badge = '⛔ blockiert'; badgeClass = 'loki-blocked'; }
+    else { badge = '⚙️ arbeitet…'; badgeClass = 'loki-running'; }
+
+    const headHtml =
+      esc(w.label) +
+      ' <span class="loki-log-status ' + badgeClass + '">' + esc(badge) + '</span>';
+
+    const wasAtBottom = chatAtBottom(chat);
+
+    let bubble = chat.querySelector('.loki-bubble[data-task-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id.replace(/"/g, '\\"')) + '"]');
+    if (!bubble) {
+      // Neue Worker-Log-Bubble über die appendBubble-Mechanik anlegen…
+      const body = appendBubble(speakerKey, '', 'worker');
+      if (!body) return null;
+      bubble = body.closest('.loki-bubble');
+      if (!bubble) return null;
+      bubble.classList.add('loki-bubble-workerlog');
+      bubble.setAttribute('data-task-id', id);
+      // Body als scrollbarer Log-Container markieren.
+      body.classList.add('loki-log');
+    }
+
+    const head = bubble.querySelector('.loki-bubble-head');
+    const body = bubble.querySelector('.loki-bubble-body');
+    if (head) head.innerHTML = headHtml;
+    if (body) body.innerHTML = bodyHtml;
+
+    if (wasAtBottom) chat.scrollTop = chat.scrollHeight;
+    return body;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  //  WORKER-LOG: REFRESH (Board → pro Worker-Task das Arbeitslog holen + rendern)
+  // ───────────────────────────────────────────────────────────────────────────
+  // refreshWorkerLogs():
+  //   - GET /api/kanban/board → alle Tasks flach.
+  //   - Worker-Tasks = status ∈ {running, done} UND assignee != null UND assignee != 'mira'
+  //     (echte Worker-Arbeit, nicht der Orchestrator/Parent).
+  //   - Erstsync-Schutz: beim ersten Board-Lauf werden alle bereits running/done Tasks
+  //     als BASELINE (Altlast) gemerkt und NICHT als frische Log-Bubbles gezeigt. Nur
+  //     Tasks, die WÄHREND der offenen Sitzung neu running/done werden, kommen in
+  //     workerLogIds → bekommen eine Log-Bubble.
+  //   - Pro relevantem Task: GET /api/kanban/tasks/<id>/log → parseAgentLog → upsert.
+  //   - Bei status 'done' zusätzlich task.result (falls vorhanden, via /tasks/<id>) als
+  //     Abschluss + dezenter Artefakt-Hinweis.
+  //   - XSS: Log-Inhalt IMMER via esc()/renderMd. Niemals roh ins innerHTML.
+  function refreshWorkerLogs() {
+    if (!panelActive) return;
+    callApi('/api/kanban/board')
+      .then((data) => {
+        if (!data || !Array.isArray(data.columns)) return;
+
+        const tasks = [];
+        data.columns.forEach((col) => {
+          const status = col && col.name;
+          (col && col.tasks || []).forEach((t) => {
+            if (!t || !t.id) return;
+            tasks.push({
+              id: String(t.id),
+              title: t.title || '(ohne Titel)',
+              status: status,
+              assignee: t.assignee || '',
+            });
+          });
+        });
+
+        // Worker-Tasks bestimmen (echte Worker-Arbeit).
+        const isWorkerTask = (t) => {
+          const st = String(t.status || '').toLowerCase();
+          if (st !== 'running' && st !== 'done') return false;
+          if (!t.assignee) return false;
+          if (String(t.assignee).toLowerCase() === 'mira') return false;
+          return true;
+        };
+
+        // Erstsync-Schutz: beim ersten Lauf nur Baseline befüllen.
+        if (!workerBaselineReady) {
+          tasks.forEach((t) => { if (isWorkerTask(t)) workerLogBaseline.add(t.id); });
+          workerBaselineReady = true;
+          return;
+        }
+
+        // Tasks, die JETZT running/done sind und NICHT in der Baseline → ab jetzt zeigen.
+        tasks.forEach((t) => {
+          if (isWorkerTask(t) && !workerLogBaseline.has(t.id)) workerLogIds.add(t.id);
+        });
+
+        // Für jeden zu zeigenden Worker-Task das Log holen + rendern.
+        tasks.forEach((t) => {
+          if (!workerLogIds.has(t.id)) return;
+          renderWorkerTaskLog(t);
+        });
+      })
+      .catch(() => { /* Live-Refresh: Fehler leise schlucken, nächster Poll versucht es erneut. */ });
+  }
+
+  // Holt das Log (und bei 'done' das Result) eines einzelnen Worker-Tasks und rendert
+  // es idempotent in dessen Log-Bubble.
+  function renderWorkerTaskLog(t) {
+    const st = String(t.status || '').toLowerCase();
+    callApi('/api/kanban/tasks/' + encodeURIComponent(t.id) + '/log')
+      .then((r) => {
+        const content = (r && typeof r.content === 'string') ? r.content : '';
+        const parsed = parseAgentLog(content);
+
+        // Signatur aus Status + geparstem Log → nur bei echter Änderung neu rendern.
+        let sig = st + '|' + parsed.length + '|' + parsed.slice(-400);
+
+        // Bei 'done' das Result anhängen (eigener Call, defensiv).
+        if (st === 'done') {
+          callApi('/api/kanban/tasks/' + encodeURIComponent(t.id))
+            .then((tr) => {
+              const task = tr && tr.task;
+              const result = task && typeof task.result === 'string' ? task.result : '';
+              renderLogBody(t, st, parsed, result, sig + '|done:' + result.slice(0, 200));
+            })
+            .catch(() => {
+              // Result nicht abrufbar → nur Log + Abschluss-Hinweis.
+              renderLogBody(t, st, parsed, '', sig + '|done:noresult');
+            });
+        } else {
+          renderLogBody(t, st, parsed, '', sig);
+        }
+      })
+      .catch(() => { /* Log (noch) nicht da → still, nächster Poll. */ });
+  }
+
+  // Baut den HTML-Body der Log-Bubble (sicher escaped) und upsertet sie.
+  function renderLogBody(t, status, parsedLog, result, sig) {
+    // De-Dupe: identische Signatur → nichts tun (kein DOM-Update, kein Scroll-Ruck).
+    if (lastLogSig.get(t.id) === sig) return;
+    lastLogSig.set(t.id, sig);
+
+    let html = '';
+
+    // (1) Aufgaben-Titel als dezente Kopfzeile im Body.
+    html += '<div class="loki-log-task">' + esc('„' + t.title + '"') + '</div>';
+
+    // (2) Das geparste Arbeitslog — IMMER escaped, in <pre>-artigem Container.
+    if (parsedLog && parsedLog.trim()) {
+      html += '<div class="loki-log">' + esc(parsedLog) + '</div>';
+    } else {
+      html += '<div class="loki-log loki-log-muted">' +
+        esc(status === 'running' ? 'Worker startet … (noch kein Log)' : 'Kein Arbeitslog verfügbar.') +
+        '</div>';
+    }
+
+    // (3) Bei 'done': Abschluss + Result + dezenter Artefakt-Hinweis.
+    if (status === 'done') {
+      if (result && result.trim()) {
+        // result über renderMd (escaped + mini-markdown, inkl. evtl. Bild/Link).
+        html += '<div class="loki-log-result"><div class="loki-log-result-label">Ergebnis</div>' +
+          renderMd(result) + '</div>';
+      }
+      // Artefakt-Hinweis aus Result ODER Log ziehen (defensiv, dezent — kein Vollanzeige).
+      const hint = detectArtifactHint(result) || detectArtifactHint(parsedLog);
+      if (hint) {
+        const url = safeUrl(hint);
+        if (url && url !== '#') {
+          html += '<div class="loki-log-artifact">📎 Artefakt: ' +
+            '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(hint) + '</a></div>';
+        } else {
+          html += '<div class="loki-log-artifact">📎 Artefakt erwähnt: ' + esc(hint) + '</div>';
+        }
+      }
+    }
+
+    upsertWorkerBubble(t.id, t.assignee || 'default', status, html);
+  }
+
+  // True, sobald mindestens ein Worker-Task aus unserer Sicht 'running' ist
+  // (über den letzten Board-Diff in seenTasks). Steuert den 4s-Schnellpoll.
+  function anyWorkerRunning() {
+    for (const v of seenTasks.values()) {
+      if (v && String(v.status).toLowerCase() === 'running' &&
+          v.assignee && String(v.assignee).toLowerCase() !== 'mira') {
+        return true;
+      }
+    }
+    return false;
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -447,9 +808,10 @@
       // Mission-Textarea leeren — der Auftrag steht jetzt im Verlauf.
       if (textEl) textEl.value = '';
       // Live-Sync sicherstellen + sofort abgleichen → die entstehenden Subtasks
-      // erscheinen als Worker-Bubbles.
+      // erscheinen als Worker-Bubbles. Worker-Logs ebenfalls anstoßen.
       startTeamLive();
       syncTeamFromBoard();
+      refreshWorkerLogs();
     } catch (e) {
       const s = e && e.status;
       if (s === 404 || s === 503) {
@@ -482,6 +844,7 @@
         const n = (r && typeof r === 'object' && typeof r.spawned === 'number') ? r.spawned : null;
         toast('Dispatch ausgelöst' + (n != null ? ' — ' + n + ' Worker gespawnt' : ''), 'success');
         syncTeamFromBoard();
+        refreshWorkerLogs();
       })
       .catch((e) => {
         const s = e && e.status;
@@ -500,6 +863,12 @@
   //   - erzeugt pro ÄNDERUNG eine Bubble (siehe Übergangsregeln unten),
   //   - aktualisiert seenTasks danach.
   //   Erster Aufruf nach Panel-Öffnen (teamSynced=false): NUR befüllen, keine Bubbles.
+  //
+  //   Beziehung zu den Worker-LOG-Bubbles: die hier erzeugte "🧭 Mira → <Worker>: …"-
+  //   Delegationszeile BLEIBT (zeigt die VERTEILUNG). Die separate Worker-Log-Bubble
+  //   (data-task-id, via refreshWorkerLogs) zeigt darunter, was der Worker TATSÄCHLICH
+  //   tut. So: Mira verteilt → Worker arbeitet sichtbar → Worker fertig + Ergebnis.
+  //   Beim 'running'-Übergang stoßen wir zusätzlich den Schnellpoll an.
   function syncTeamFromBoard() {
     if (!panelActive) return;
     callApi('/api/kanban/board')
@@ -531,6 +900,8 @@
           return;
         }
 
+        let newRunning = false;
+
         // Diffen: für jede Änderung eine passende Bubble.
         flat.forEach((t) => {
           const prev = seenTasks.get(t.id);
@@ -542,12 +913,17 @@
               appendBubble('mira',
                 renderMd('🧭 Mira → ' + wLabel + ': „' + t.title + '"'), 'mira');
             }
+            if (String(t.status).toLowerCase() === 'running' &&
+                t.assignee && String(t.assignee).toLowerCase() !== 'mira') {
+              newRunning = true;
+            }
           } else {
             // Statuswechsel?
             if (prev.status !== t.status) {
               if (t.status === 'running') {
                 appendBubble(t.assignee || 'default',
                   renderMd((wLabel ? wLabel + ': ' : '') + 'Ich übernehme „' + t.title + '"…'), 'worker');
+                if (t.assignee && String(t.assignee).toLowerCase() !== 'mira') newRunning = true;
               } else if (t.status === 'done') {
                 appendBubble(t.assignee || 'default',
                   renderMd('✅ „' + t.title + '" erledigt.'), 'worker');
@@ -560,6 +936,11 @@
 
           seenTasks.set(t.id, { status: t.status, assignee: t.assignee });
         });
+
+        // Worker-Log-Inhalte aktualisieren (eigener, idempotenter Pfad).
+        refreshWorkerLogs();
+        // Solange ein Worker läuft: Schnellpoll sicherstellen, sonst stoppen.
+        syncFastLog(newRunning);
       })
       .catch((e) => {
         const s = e && e.status;
@@ -577,9 +958,14 @@
   // ───────────────────────────────────────────────────────────────────────────
   function initTeamChat() {
     loadProfiles();
-    teamSynced = false;        // erster Sync nach Öffnen nur befüllen, keine Bubbles
+    teamSynced = false;          // erster Sync nach Öffnen nur befüllen, keine Bubbles
+    workerBaselineReady = false; // erster Log-Sync nach Öffnen nur Baseline merken
+    workerLogIds.clear();
+    workerLogBaseline.clear();
+    lastLogSig.clear();
     startTeamLive();
     syncTeamFromBoard();
+    refreshWorkerLogs();
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -615,10 +1001,33 @@
     pollTimer = setInterval(() => { if (panelActive) syncTeamFromBoard(); }, 5000);
   }
 
+  // Schnellpoll (4s) NUR für Worker-Logs, solange mindestens ein Worker 'running' ist.
+  // wantRunning ist ein Hinweis aus dem letzten Diff; zusätzlich prüfen wir den
+  // aktuellen seenTasks-State (anyWorkerRunning).
+  function syncFastLog(wantRunning) {
+    const running = wantRunning || anyWorkerRunning();
+    if (running) {
+      if (!fastLogTimer) {
+        fastLogTimer = setInterval(() => {
+          if (!panelActive) { stopFastLog(); return; }
+          if (!anyWorkerRunning()) { stopFastLog(); return; }
+          refreshWorkerLogs();
+        }, 4000);
+      }
+    } else {
+      stopFastLog();
+    }
+  }
+
+  function stopFastLog() {
+    if (fastLogTimer) { clearInterval(fastLogTimer); fastLogTimer = null; }
+  }
+
   function stopTeamLive() {
     if (kanbanES) { try { kanbanES.close(); } catch (_) {} kanbanES = null; }
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     if (reloadPending) { clearTimeout(reloadPending); reloadPending = null; }
+    stopFastLog();
   }
 
   // ───────────────────────────────────────────────────────────────────────────

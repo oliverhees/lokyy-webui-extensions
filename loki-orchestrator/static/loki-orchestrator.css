@@ -135,5 +135,82 @@ main.main.loki-active > #mainChat { display: none !important; }
   color: var(--muted, #9aa0b4);
 }
 
+/* ── Worker-Log-Bubble (echtes Arbeitslog jedes Workers) ───────────────────── */
+/* Eine Bubble pro Task (data-task-id), idempotent aktualisiert. Body enthält den
+ * geparsten Agent-Log-Verlauf + bei 'done' das Ergebnis + Artefakt-Hinweis. */
+.loki-bubble-workerlog { max-width: 92%; }
+
+/* Der scrollbare Log-Container: monospace, Whitespace erhalten, gedeckelt. */
+.loki-bubble-worker .loki-log,
+.loki-bubble-workerlog .loki-log {
+  font: 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+  opacity: .92;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+.loki-log-muted { opacity: .6; font-style: italic; }
+
+/* Aufgaben-Titel als dezente Kopfzeile im Log-Body. */
+.loki-log-task {
+  font-size: 12px; font-weight: 600; color: var(--muted, #9aa0b4);
+  margin-bottom: 4px;
+}
+
+/* Abschluss-Ergebnis bei 'done'. */
+.loki-log-result {
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px dashed var(--border, #2a2d3a);
+  font-size: 13px; line-height: 1.5;
+}
+.loki-log-result-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--accent, #14b8a6); margin-bottom: 3px;
+}
+
+/* Dezenter Artefakt-Hinweis. */
+.loki-log-artifact {
+  margin-top: 6px; font-size: 12px; color: var(--muted, #9aa0b4);
+}
+.loki-log-artifact a { color: var(--accent, #14b8a6); }
+
+/* ── Status-Badges im Bubble-Head ── */
+.loki-log-status {
+  display: inline-block; margin-left: 6px;
+  padding: 1px 7px; border-radius: 999px;
+  font-size: 10px; font-weight: 700; letter-spacing: .02em;
+  vertical-align: middle;
+}
+/* arbeitet… → Akzent, dezent pulsierend. */
+.loki-log-status.loki-running {
+  color: var(--accent, #14b8a6);
+  background: var(--accent-bg, rgba(20, 184, 166, .14));
+  border: 1px solid var(--accent, #14b8a6);
+  animation: loki-pulse 1.6s ease-in-out infinite;
+}
+/* fertig → grün. */
+.loki-log-status.loki-done {
+  color: #6ee7b7;
+  background: rgba(110, 231, 183, .12);
+  border: 1px solid rgba(110, 231, 183, .5);
+}
+/* blockiert → gedämpftes Rot. */
+.loki-log-status.loki-blocked {
+  color: #fca5a5;
+  background: rgba(252, 165, 165, .12);
+  border: 1px solid rgba(252, 165, 165, .5);
+}
+
+@keyframes loki-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .5; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loki-log-status.loki-running { animation: none; }
+}
+
 /* ── Nav-Button (Akzent-Tönung, ohne Host-Verhalten zu brechen) ── */
 .loki-nav-btn.active { color: var(--accent, #14b8a6); }
