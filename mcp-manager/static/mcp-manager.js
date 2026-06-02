@@ -59,8 +59,8 @@
 
         <form class="lokyy-mcp-form" id="lokyy-mcp-form">
           <label>Name <span class="lokyy-mcp-req">*</span>
-            <input name="name" required pattern="[A-Za-z0-9_-]+" placeholder="z.B. lokyy-brain" autocomplete="off">
-            <small>Nur Buchstaben, Zahlen, - und _.</small>
+            <input name="name" required placeholder="z.B. lokyy-brain" autocomplete="off">
+            <small>Nur Buchstaben, Zahlen, - und _ (keine Leerzeichen).</small>
           </label>
 
           <div class="lokyy-mcp-transport">
@@ -147,6 +147,10 @@
     const f = (n) => (form.elements[n] ? form.elements[n].value.trim() : '');
     const name = f('name');
     if (!name) { toast('Name fehlt', 'error'); return; }
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+      toast('Name darf nur Buchstaben, Zahlen, - und _ enthalten (keine Leerzeichen)', 'error');
+      return;
+    }
     const transport = form.elements['transport'].value;
 
     const payload = {};
