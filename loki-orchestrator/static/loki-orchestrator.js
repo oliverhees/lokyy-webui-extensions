@@ -168,7 +168,7 @@
     // Rail (Desktop)
     const rail = document.querySelector('nav.rail');
     if (rail && !document.getElementById(RAIL_BTN_ID)) {
-      const settingsBtn = rail.querySelector('.rail-btn[data-panel="settings"]');
+      const firstRailBtn = rail.querySelector('.rail-btn');
       const btn = document.createElement('button');
       btn.id = RAIL_BTN_ID;
       btn.type = 'button';
@@ -178,15 +178,15 @@
       btn.setAttribute('aria-label', 'Loki Orchestrator');
       btn.innerHTML = RAIL_SVG;
       btn.addEventListener('click', () => openPanel());
-      // Vor Settings einhängen (passt thematisch ans Ende der Funktions-Tabs).
-      if (settingsBtn) rail.insertBefore(btn, settingsBtn);
+      // Oben in der Rail einhängen (bei den Haupt-Tabs, ganz oben — nicht unten bei Settings).
+      if (firstRailBtn) rail.insertBefore(btn, firstRailBtn);
       else rail.appendChild(btn);
     }
 
     // Sidebar-Nav (Mobile/kompakt)
     const sidebarNav = document.querySelector('.sidebar-nav');
     if (sidebarNav && !document.getElementById(SIDEBAR_BTN_ID)) {
-      const settingsBtn = sidebarNav.querySelector('.nav-tab[data-panel="settings"]');
+      const firstNavTab = sidebarNav.querySelector('.nav-tab');
       const btn = document.createElement('button');
       btn.id = SIDEBAR_BTN_ID;
       btn.type = 'button';
@@ -196,7 +196,8 @@
       btn.setAttribute('data-tooltip', 'Loki Orchestrator');
       btn.innerHTML = RAIL_SVG;
       btn.addEventListener('click', () => openPanel());
-      if (settingsBtn) sidebarNav.insertBefore(btn, settingsBtn);
+      // Oben einhängen, konsistent mit der Rail.
+      if (firstNavTab) sidebarNav.insertBefore(btn, firstNavTab);
       else sidebarNav.appendChild(btn);
     }
   }
