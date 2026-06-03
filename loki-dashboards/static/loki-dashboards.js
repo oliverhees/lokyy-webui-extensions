@@ -93,9 +93,15 @@
   function getSessionId() {
     try {
       const s = window.S && window.S.session;
-      const sid = s && s.session_id;
-      return sid ? String(sid) : null;
-    } catch (_) { return null; }
+      if (s && s.session_id) return String(s.session_id);
+    } catch (_) {}
+    // Fallback: session_id aus der URL (/session/<id>) — window.S.session ist beim
+    // Panel-Wechsel nicht immer gesetzt, aber die Host-UI navigiert auf /session/<id>.
+    try {
+      const m = String(location.pathname).match(/\/session\/([A-Za-z0-9_-]+)/);
+      if (m) return m[1];
+    } catch (_) {}
+    return null;
   }
 
   // Baut die verifizierte file/raw-URL für ein HTML-Dashboard (relativ, ohne führenden
