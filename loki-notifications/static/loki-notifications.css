@@ -3,14 +3,20 @@
  * Dark-Theme; Akzent über var(--accent…) mit sicheren Fallbacks (Loki-Orange).
  */
 
-/* Titel ("Loki OS") nach LINKS, Glocke/Reload nach rechts.
-   Bar ist von Haus aus justify-content:center → wir überschreiben auf flex-start
-   und lassen den vorhandenen .app-titlebar-spacer (flex:1) den Rest rechts halten. */
+/* Titel ("Loki OS") nach LINKS. Die Bar ist von Haus aus justify-content:center;
+   wir überschreiben auf flex-start, damit Logo/Titel links kleben. */
 header.app-titlebar.loki-has-notif { justify-content: flex-start; }
-header.app-titlebar.loki-has-notif .app-titlebar-spacer { flex: 1 1 auto; }
+
+/* Glocke IMMER ganz rechts. Der .app-titlebar-spacer (flex:1) dehnt sich in
+   dieser Bar NICHT zuverlässig (verifiziert: Glocke landete sonst bei x≈179).
+   Deshalb nehmen wir die Glocke per absoluter Positionierung aus dem flex-Flow.
+   header.app-titlebar ist position:relative → right ankert am Bar-Rand. */
+header.app-titlebar.loki-has-notif .loki-notif-wrap {
+  position: absolute; right: 12px; top: 0; height: 100%; margin: 0;
+}
 
 /* ── Glocke ─────────────────────────────────────────────────────────────── */
-.loki-notif-wrap { position: relative; display: inline-flex; align-items: center; }
+.loki-notif-wrap { display: inline-flex; align-items: center; }
 
 .loki-notif-bell {
   display: inline-flex; align-items: center; justify-content: center;
