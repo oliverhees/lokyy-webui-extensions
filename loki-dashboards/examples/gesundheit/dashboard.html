@@ -133,12 +133,14 @@
   }
 
   // Relative File-API-URL bauen (ohne führenden Slash → same-origin im sandboxed iframe).
+  // ORIGIN-RELATIV (führender Slash): die iframe-URL ist /api/file/raw?… — ein relativer
+  // Pfad würde zu /api/file/api/list falsch auflösen. Führender Slash → immer /api/… .
   function listUrl(sid, rel) {
-    return 'api/list?session_id=' + encodeURIComponent(sid)
+    return '/api/list?session_id=' + encodeURIComponent(sid)
       + '&path=' + encodeURIComponent(rel);
   }
   function rawUrl(sid, rel) {
-    return 'api/file/raw?session_id=' + encodeURIComponent(sid)
+    return '/api/file/raw?session_id=' + encodeURIComponent(sid)
       + '&path=' + encodeURIComponent(rel);
   }
 

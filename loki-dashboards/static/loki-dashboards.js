@@ -104,11 +104,11 @@
     return null;
   }
 
-  // Baut die verifizierte file/raw-URL für ein HTML-Dashboard (relativ, ohne führenden
-  // Slash — exakt wie die Host-UI). inline=1 ist für .html PFLICHT, sonst Download.
-  // Cache-Bust per &t=… (Server liefert no-store).
+  // Baut die file/raw-URL für ein HTML-Dashboard. ORIGIN-RELATIV (führender Slash):
+  // die Seiten-URL ist /session/<id>, ein relativer Pfad würde zu /session/api/… falsch
+  // auflösen. inline=1 ist für .html PFLICHT, sonst Download. Cache-Bust per &t=…
   function buildFrameUrl(sid, relPath) {
-    return 'api/file/raw'
+    return '/api/file/raw'
       + '?session_id=' + encodeURIComponent(sid)
       + '&path=' + encodeURIComponent(relPath)
       + '&inline=1'
