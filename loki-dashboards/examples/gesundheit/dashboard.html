@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gesundheits-Dashboard</title>
+<!--
+  ============================================================================
+  GESUNDHEITS-DASHBOARD  —  self-contained Vorlage für den Loki-Dashboard-Skill
+  ============================================================================
+  Reines HTML + CSS + JS. KEINE externen Libs/CDN (offline-fähig im iframe).
+  Dark Theme, Akzent Orange #F97316. Sparkline ist reines SVG (keine Lib).
+
+  WIE ES SEINE DATEN LÄDT (Vorlage fürs Skill — bitte genau so übernehmen):
+  ---------------------------------------------------------------------------
+  Dieses HTML wird von der loki-dashboards-Extension in einem SANDBOXED iframe
+  per file/raw-Endpoint ausgeliefert:
+
+      api/file/raw?session_id=<SID>&path=<ordner>/dashboard.html&inline=1&t=<ts>
+
+  Daraus leiten wir ALLES ab — wir brauchen KEINE Konfiguration:
+
+    1. session_id  →  aus dem EIGENEN iframe-src-Query (location.search).
+                      Das ist der einzige Handle für die File-API.
+    2. Eigener Ordner-Pfad  →  aus dem 'path'-Query: vom letzten '/' alles
+                      abschneiden ('a/b/dashboard.html' → 'a/b'). Liegt das
+                      Dashboard im Root ('dashboard.html'), ist der Ordner ''.
+    3. daten/-Ordner listen:
+                      GET api/list?session_id=<SID>&path=<ordner>/daten
+                      → { entries:[{name, path, type, ...}], ... }
+                      Wir filtern auf *.json-Dateien.
+    4. Jede JSON holen:
+                      GET api/file/raw?session_id=<SID>&path=<ordner>/daten/<datei>
+                      (.json ist KEIN dangerous type → direkt JSON, kein inline nötig)
+                      → JSON.parse, nach 'date' sortieren.
+
+  Pfade sind IMMER relativ zum Workspace-Root der Session — niemals absolut.
+  Alle URLs RELATIV (ohne führenden Slash), damit sie im sandboxed iframe gegen
+  denselben Origin laufen (Extension setzt sandbox="allow-scripts allow-same-origin").
+
+  ROBUSTHEIT: Schlägt die Pfadermittlung oder die File-API fehl, zeigt das
+  Dashboard einen klaren Hinweis (statt weiß zu bleiben).
+  ============================================================================
+-->
+<style>
+  :root {
+    --bg: #0b0d16;
+    --panel: #14161f;
+    --border: #2a2d3a;
+    --text: #e8e8ee;
+    --muted: #9aa0b4;
+    --accent: #F97316;
+    --accent-soft: rgba(249, 115, 22, .14);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 24px; overflow-y: auto;
+  }
+  .head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px; }
+  .head h1 { font-size: 20px; font-weight: 700; margin: 0; }
+  .head .sub { color: var(--muted); font-size: 13px; }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 18px; border-top: 3px solid var(--accent);
+  }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  .card .value { font-size: 30px; font-weight: 800; margin-top: 6px; }
+  .card .unit { font-size: 14px; color: var(--muted); font-weight: 500; margin-left: 4px; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 18px;
+  }
+  .panel h2 { font-size: 14px; font-weight: 700; margin: 0 0 14px; }
+  .chart { width: 100%; }
+  .legend { display: flex; gap: 18px; margin-top: 10px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: middle; background: var(--accent); }
+
+  .notice {
+    background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 10px; padding: 16px 18px; color: var(--text); line-height: 1.6;
+  }
+  .notice b { color: var(--accent); }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="head">
+    <h1>📊 Gesundheit</h1>
+    <span class="sub" id="sub">lädt…</span>
+  </div>
+  <div id="content"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var content = document.getElementById('content');
+  var sub = document.getElementById('sub');
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c];
+    });
+  }
+
+  function showNotice(msg) {
+    sub.textContent = 'Hinweis';
+    content.innerHTML = '<div class="notice">' + msg + '</div>';
+  }
+
+  // (1) session_id aus dem eigenen iframe-src-Query.
+  function getSessionId() {
+    try {
+      var p = new URLSearchParams(window.location.search);
+      return p.get('session_id');
+    } catch (e) { return null; }
+  }
+
+  // (2) Eigener Ordner-Pfad aus dem 'path'-Query (vom letzten '/' abschneiden).
+  function getOwnDir() {
+    try {
+      var p = new URLSearchParams(window.location.search);
+      var path = p.get('path') || '';
+      var i = path.lastIndexOf('/');
+      return i >= 0 ? path.slice(0, i) : '';
+    } catch (e) { return null; }
+  }
+
+  // Relative File-API-URL bauen (ohne führenden Slash → same-origin im sandboxed iframe).
+  function listUrl(sid, rel) {
+    return 'api/list?session_id=' + encodeURIComponent(sid)
+      + '&path=' + encodeURIComponent(rel);
+  }
+  function rawUrl(sid, rel) {
+    return 'api/file/raw?session_id=' + encodeURIComponent(sid)
+      + '&path=' + encodeURIComponent(rel);
+  }
+
+  function fetchJson(url) {
+    return fetch(url, { credentials: 'same-origin' }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  }
+
+  // (3)+(4): daten/ listen → *.json holen → parsen → nach date sortieren.
+  function loadData(sid, dir) {
+    var datenDir = dir ? (dir + '/daten') : 'daten';
+    return fetchJson(listUrl(sid, datenDir)).then(function (res) {
+      var entries = (res && res.entries) || [];
+      var files = entries.filter(function (e) {
+        return e && e.type !== 'dir' && /\.json$/i.test(e.name || '');
+      });
+      if (!files.length) throw new Error('keine JSON-Dateien in "' + datenDir + '"');
+      return Promise.all(files.map(function (f) {
+        var rel = f.path || (datenDir + '/' + f.name);
+        return fetchJson(rawUrl(sid, rel)).catch(function () { return null; });
+      }));
+    }).then(function (rows) {
+      var data = rows.filter(function (r) {
+        return r && typeof r === 'object' && r.date != null;
+      });
+      data.sort(function (a, b) {
+        return String(a.date).localeCompare(String(b.date));
+      });
+      return data;
+    });
+  }
+
+  // ── Rendering ──────────────────────────────────────────────────────────────
+  function fmt(n) {
+    if (n == null || isNaN(n)) return '–';
+    return Number(n).toLocaleString('de-DE');
+  }
+
+  // Simple SVG-Sparkline für eine Metrik über die Tage.
+  function sparkline(values, opts) {
+    opts = opts || {};
+    var w = 560, h = 90, pad = 8;
+    var n = values.length;
+    if (!n) return '';
+    var max = Math.max.apply(null, values);
+    var min = Math.min.apply(null, values);
+    if (max === min) { max = min + 1; }
+    var iw = w - pad * 2, ih = h - pad * 2;
+    var pts = values.map(function (v, i) {
+      var x = pad + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
+      var y = pad + ih - ((v - min) / (max - min)) * ih;
+      return [x, y];
+    });
+    var line = pts.map(function (p, i) {
+      return (i === 0 ? 'M' : 'L') + p[0].toFixed(1) + ' ' + p[1].toFixed(1);
+    }).join(' ');
+    var area = 'M' + pts[0][0].toFixed(1) + ' ' + (h - pad).toFixed(1)
+      + ' ' + line.replace(/^M/, 'L')
+      + ' L' + pts[n - 1][0].toFixed(1) + ' ' + (h - pad).toFixed(1) + ' Z';
+    var dots = pts.map(function (p) {
+      return '<circle cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1)
+        + '" r="3" fill="var(--accent)" />';
+    }).join('');
+    return '<svg class="chart" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" '
+      + 'width="100%" height="' + h + '" role="img" aria-label="' + esc(opts.label || '') + '">'
+      + '<path d="' + area + '" fill="var(--accent-soft)" stroke="none" />'
+      + '<path d="' + line + '" fill="none" stroke="var(--accent)" stroke-width="2" '
+      + 'stroke-linejoin="round" stroke-linecap="round" />'
+      + dots
+      + '</svg>';
+  }
+
+  function render(data) {
+    if (!data.length) { showNotice('Keine gültigen Datensätze gefunden.'); return; }
+
+    var today = data[data.length - 1];
+    sub.textContent = data.length + ' Tage · zuletzt ' + esc(today.date);
+
+    var cards =
+      '<div class="cards">'
+      + '<div class="card"><div class="label">Schritte heute</div>'
+        + '<div class="value">' + fmt(today.steps) + '</div></div>'
+      + '<div class="card"><div class="label">Schlaf heute</div>'
+        + '<div class="value">' + fmt(today.sleep_h) + '<span class="unit">h</span></div></div>'
+      + '<div class="card"><div class="label">HRV heute</div>'
+        + '<div class="value">' + fmt(today.hrv) + '<span class="unit">ms</span></div></div>'
+      + '</div>';
+
+    var steps = data.map(function (d) { return Number(d.steps) || 0; });
+    var labels = data.map(function (d) { return esc(d.date); }).join(' · ');
+
+    var trend =
+      '<div class="panel">'
+      + '<h2>Schritte – Verlauf</h2>'
+      + sparkline(steps, { label: 'Schritte-Verlauf' })
+      + '<div class="legend"><span><span class="dot"></span>Schritte pro Tag</span>'
+      + '<span class="muted">' + labels + '</span></div>'
+      + '</div>';
+
+    content.innerHTML = cards + trend;
+  }
+
+  // ── Start ────────────────────────────────────────────────────────────────
+  var sid = getSessionId();
+  var dir = getOwnDir();
+
+  if (!sid) {
+    showNotice('<b>Keine Session-ID</b> im eigenen iframe-Link gefunden. '
+      + 'Dieses Dashboard muss über die Loki-Dashboards-Extension '
+      + '(<span class="muted">api/file/raw?session_id=…</span>) geladen werden.');
+    return;
+  }
+  if (dir == null) {
+    showNotice('<b>Eigener Pfad konnte nicht ermittelt werden.</b> '
+      + 'Erwarteter iframe-Link enthält einen <span class="muted">path=…</span>-Parameter.');
+    return;
+  }
+
+  loadData(sid, dir)
+    .then(render)
+    .catch(function (e) {
+      showNotice('<b>Daten konnten nicht geladen werden.</b><br>'
+        + esc(e && e.message ? e.message : String(e))
+        + '<br><span class="muted">Erwartet wird ein Ordner '
+        + '<code>' + esc(dir ? dir + '/daten' : 'daten') + '</code> mit JSON-Dateien '
+        + '(je <code>{date, steps, sleep_h, hrv}</code>).</span>');
+    });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "required": ["date", "steps", "sleep_h", "hrv"],
+  "properties": {
+    "date": { "type": "string" },
+    "steps": { "type": "number" },
+    "sleep_h": { "type": "number" },
+    "hrv": { "type": "number" }
+  }
+}
