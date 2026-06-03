@@ -12,6 +12,7 @@ done
 
 for f in loki-branding/static/loki.js loki-branding/static/loki.css \
          loki-dashboards/static/loki-dashboards.js loki-dashboards/static/loki-dashboards.css \
+         loki-notifications/static/loki-notifications.js loki-notifications/static/loki-notifications.css \
          mcp-manager/static/mcp-manager.js mcp-manager/static/mcp-manager.css \
          agent-importer/static/agent-importer.js agent-importer/static/agent-importer.css; do
   name=$(basename "$f")
