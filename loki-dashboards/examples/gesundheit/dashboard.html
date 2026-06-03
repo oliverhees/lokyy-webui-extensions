@@ -11,35 +11,30 @@
   Reines HTML + CSS + JS. KEINE externen Libs/CDN (offline-fähig im iframe).
   Dark Theme, Akzent Orange #F97316. Sparkline ist reines SVG (keine Lib).
 
-  WIE ES SEINE DATEN LÄDT (Vorlage fürs Skill — bitte genau so übernehmen):
+  WIE ES SEINE DATEN BEKOMMT (Vorlage fürs Skill — bitte genau so übernehmen):
   ---------------------------------------------------------------------------
-  Dieses HTML wird von der loki-dashboards-Extension in einem SANDBOXED iframe
-  per file/raw-Endpoint ausgeliefert:
+  Dieses Dashboard macht KEINEN eigenen fetch / API-Call. Es liest seine Daten
+  aus der globalen Variable `window.LOKI_DATA`.
 
-      api/file/raw?session_id=<SID>&path=<ordner>/dashboard.html&inline=1&t=<ts>
+  WARUM: Der Hermes-Server liefert user-HTML über /api/file/raw mit dem Header
+  "content-security-policy: sandbox allow-scripts allow-popups" — OHNE
+  allow-same-origin. Ein per file/raw geladenes Dokument hätte daher einen
+  OPAKEN (null) Origin und könnte KEINE same-origin-API-Calls machen
+  ("Failed to fetch"). Deshalb lädt die loki-dashboards-EXTENSION die JSON-
+  Dateien aus dem 'daten/'-Ordner PARENT-seitig (wo die API erlaubt ist) und
+  reicht sie diesem Dashboard via `iframe.srcdoc` + injiziertem
+  `window.LOKI_DATA` durch.
 
-  Daraus leiten wir ALLES ab — wir brauchen KEINE Konfiguration:
+  KONTRAKT (von der Extension gesetzt):
+    - window.LOKI_DATA       → Array der Datensätze, bereits nach 'date' sortiert.
+                               Jeder Datensatz z.B. { date, steps, sleep_h, hrv }.
+    - window.LOKI_DASHBOARD   → { folder, count } (Meta-Info, optional nutzbar).
 
-    1. session_id  →  aus dem EIGENEN iframe-src-Query (location.search).
-                      Das ist der einzige Handle für die File-API.
-    2. Eigener Ordner-Pfad  →  aus dem 'path'-Query: vom letzten '/' alles
-                      abschneiden ('a/b/dashboard.html' → 'a/b'). Liegt das
-                      Dashboard im Root ('dashboard.html'), ist der Ordner ''.
-    3. daten/-Ordner listen:
-                      GET api/list?session_id=<SID>&path=<ordner>/daten
-                      → { entries:[{name, path, type, ...}], ... }
-                      Wir filtern auf *.json-Dateien.
-    4. Jede JSON holen:
-                      GET api/file/raw?session_id=<SID>&path=<ordner>/daten/<datei>
-                      (.json ist KEIN dangerous type → direkt JSON, kein inline nötig)
-                      → JSON.parse, nach 'date' sortieren.
+  Liegt window.LOKI_DATA leer/nicht vor, zeigt das Dashboard einen klaren
+  Hinweis (statt weiß zu bleiben).
 
-  Pfade sind IMMER relativ zum Workspace-Root der Session — niemals absolut.
-  Alle URLs RELATIV (ohne führenden Slash), damit sie im sandboxed iframe gegen
-  denselben Origin laufen (Extension setzt sandbox="allow-scripts allow-same-origin").
-
-  ROBUSTHEIT: Schlägt die Pfadermittlung oder die File-API fehl, zeigt das
-  Dashboard einen klaren Hinweis (statt weiß zu bleiben).
+  Die Extension setzt sandbox="allow-scripts" (KEIN allow-same-origin nötig,
+  da hier kein API-Zugriff mehr stattfindet).
   ============================================================================
 -->
 <style>
@@ -114,67 +109,6 @@
     content.innerHTML = '<div class="notice">' + msg + '</div>';
   }
 
-  // (1) session_id aus dem eigenen iframe-src-Query.
-  function getSessionId() {
-    try {
-      var p = new URLSearchParams(window.location.search);
-      return p.get('session_id');
-    } catch (e) { return null; }
-  }
-
-  // (2) Eigener Ordner-Pfad aus dem 'path'-Query (vom letzten '/' abschneiden).
-  function getOwnDir() {
-    try {
-      var p = new URLSearchParams(window.location.search);
-      var path = p.get('path') || '';
-      var i = path.lastIndexOf('/');
-      return i >= 0 ? path.slice(0, i) : '';
-    } catch (e) { return null; }
-  }
-
-  // Relative File-API-URL bauen (ohne führenden Slash → same-origin im sandboxed iframe).
-  // ORIGIN-RELATIV (führender Slash): die iframe-URL ist /api/file/raw?… — ein relativer
-  // Pfad würde zu /api/file/api/list falsch auflösen. Führender Slash → immer /api/… .
-  function listUrl(sid, rel) {
-    return '/api/list?session_id=' + encodeURIComponent(sid)
-      + '&path=' + encodeURIComponent(rel);
-  }
-  function rawUrl(sid, rel) {
-    return '/api/file/raw?session_id=' + encodeURIComponent(sid)
-      + '&path=' + encodeURIComponent(rel);
-  }
-
-  function fetchJson(url) {
-    return fetch(url, { credentials: 'same-origin' }).then(function (r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    });
-  }
-
-  // (3)+(4): daten/ listen → *.json holen → parsen → nach date sortieren.
-  function loadData(sid, dir) {
-    var datenDir = dir ? (dir + '/daten') : 'daten';
-    return fetchJson(listUrl(sid, datenDir)).then(function (res) {
-      var entries = (res && res.entries) || [];
-      var files = entries.filter(function (e) {
-        return e && e.type !== 'dir' && /\.json$/i.test(e.name || '');
-      });
-      if (!files.length) throw new Error('keine JSON-Dateien in "' + datenDir + '"');
-      return Promise.all(files.map(function (f) {
-        var rel = f.path || (datenDir + '/' + f.name);
-        return fetchJson(rawUrl(sid, rel)).catch(function () { return null; });
-      }));
-    }).then(function (rows) {
-      var data = rows.filter(function (r) {
-        return r && typeof r === 'object' && r.date != null;
-      });
-      data.sort(function (a, b) {
-        return String(a.date).localeCompare(String(b.date));
-      });
-      return data;
-    });
-  }
-
   // ── Rendering ──────────────────────────────────────────────────────────────
   function fmt(n) {
     if (n == null || isNaN(n)) return '–';
@@ -246,30 +180,19 @@
   }
 
   // ── Start ────────────────────────────────────────────────────────────────
-  var sid = getSessionId();
-  var dir = getOwnDir();
+  // Daten kommen aus window.LOKI_DATA (von der Extension injiziert, bereits nach
+  // 'date' sortiert). Dieses Dashboard macht KEINEN fetch / API-Call mehr.
+  var data = Array.isArray(window.LOKI_DATA) ? window.LOKI_DATA : [];
 
-  if (!sid) {
-    showNotice('<b>Keine Session-ID</b> im eigenen iframe-Link gefunden. '
-      + 'Dieses Dashboard muss über die Loki-Dashboards-Extension '
-      + '(<span class="muted">api/file/raw?session_id=…</span>) geladen werden.');
-    return;
-  }
-  if (dir == null) {
-    showNotice('<b>Eigener Pfad konnte nicht ermittelt werden.</b> '
-      + 'Erwarteter iframe-Link enthält einen <span class="muted">path=…</span>-Parameter.');
+  if (!data.length) {
+    showNotice('<b>Keine Daten übergeben.</b><br>'
+      + '<span class="muted">Die Loki-Dashboards-Extension reicht die JSON-Dateien '
+      + 'aus dem Ordner <code>daten/</code> via <code>window.LOKI_DATA</code> durch. '
+      + 'Erwartet werden JSON-Dateien (je <code>{date, steps, sleep_h, hrv}</code>).</span>');
     return;
   }
 
-  loadData(sid, dir)
-    .then(render)
-    .catch(function (e) {
-      showNotice('<b>Daten konnten nicht geladen werden.</b><br>'
-        + esc(e && e.message ? e.message : String(e))
-        + '<br><span class="muted">Erwartet wird ein Ordner '
-        + '<code>' + esc(dir ? dir + '/daten' : 'daten') + '</code> mit JSON-Dateien '
-        + '(je <code>{date, steps, sleep_h, hrv}</code>).</span>');
-    });
+  render(data);
 })();
 </script>
 </body>

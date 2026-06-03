@@ -10,10 +10,28 @@
  *        RECHTS — .loki-dash-view: <iframe class="loki-dash-frame"> + leerer Zustand.
  *   3. DISCOVERY: Über die verifizierte File-API werden alle Ordner gesucht, die eine
  *      'dashboard.html' enthalten. Pro Treffer: Name = Ordnername. Liste links rendern.
- *   4. Klick auf ein Dashboard → rechts ein sandboxed <iframe> mit der file/raw-URL der
- *      dashboard.html (inline=1, Cache-Bust). Die dashboard.html lädt ihre Daten selbst.
- *   5. Refresh-Button (lädt Liste + iframe neu). Robust gegen fehlende API (404/503).
- *   6. hidePanel: iframe-src leeren (kein Hintergrund-Laden).
+ *   4. Klick auf ein Dashboard → der PARENT (diese Extension) lädt selbst:
+ *        a) die JSON-Daten aus '<ordner>/daten/*.json'  (loadDashboardData)
+ *        b) das HTML-Template '<ordner>/dashboard.html'  (loadDashboardHtml)
+ *      und injiziert die Daten als `window.LOKI_DATA` in das HTML (buildSrcdoc).
+ *      Das fertige HTML wird per `iframe.srcdoc` gesetzt (NICHT iframe.src).
+ *   5. Refresh-Button (lädt Liste + aktives Dashboard neu). Robust gegen fehlende API.
+ *   6. hidePanel: iframe.srcdoc/src leeren (kein Hintergrund-Laden).
+ *
+ * WARUM srcdoc + window.LOKI_DATA STATT iframe.src=file/raw?
+ * -----------------------------------------------------------------------------
+ *   Der Hermes-Server liefert user-HTML über /api/file/raw mit dem Header
+ *   "content-security-policy: sandbox allow-scripts allow-popups" — OHNE
+ *   allow-same-origin. Dadurch erhält ein per iframe.src geladenes Dokument
+ *   einen OPAKEN (null) Origin und kann KEINE same-origin-API-Calls machen
+ *   (fetch /api/list, /api/file/raw → "Failed to fetch").
+ *   Der PARENT (diese Extension, in der echten Host-Origin) darf die API aber
+ *   (Status 200 verifiziert). Also lädt der Parent die Daten selbst und reicht
+ *   sie dem Dashboard via iframe.srcdoc + injiziertem window.LOKI_DATA durch.
+ *   Bei srcdoc greift das sandbox-ATTRIBUT des iframe (allow-scripts) — der
+ *   Server-CSP der file/raw-Antwort spielt keine Rolle mehr, weil das Dokument
+ *   nicht mehr über die file/raw-URL geladen wird. Das Dashboard macht KEINEN
+ *   fetch mehr; es liest nur window.LOKI_DATA.
  *
  * VERIFIZIERTE FILE-/WORKSPACE-API (nesquena/hermes-webui, gegen echten Code geprüft):
  *   - File-Ops laufen über `session_id` (NICHT `workspace`). Pfade sind relativ zum
@@ -22,12 +40,9 @@
  *   - Ordner-LISTING: GET /api/list?session_id=<SID>&path=<rel>  (Default path=".")
  *       → { entries: [{name, path, type:'dir'|'file'|'symlink', size, mtime_ns, ...}],
  *           signature, path }   (max. 200 Einträge, sortiert)
- *   - Datei roh: GET /api/file/raw?session_id=<SID>&path=<rel>[&inline=1]
- *       .html ist "dangerous type" → für iframe-Einbettung inline=1 ZWINGEND
- *       (sonst attachment/Download). iframe MUSS sandboxed sein (allow-scripts).
+ *   - Datei roh: GET /api/file/raw?session_id=<SID>&path=<rel>
+ *       → roher Dateiinhalt (JSON/HTML als Text). Im PARENT same-origin erlaubt.
  *   - Es gibt KEINEN `workspace`-Query-Param auf den File-Endpoints.
- *   - GET /api/workspaces liefert { workspaces:[{path,name}], last:"<abs>" } — verwaltet
- *     nur die Picker-Liste, liefert KEINE session_id. Wir arbeiten gegen die Session.
  *
  * DISCOVERY-STRATEGIE:
  *   - Wir listen den Workspace-Root (path="."). Für jeden Eintrag vom Typ 'dir' listen
@@ -56,6 +71,7 @@
 
   // ── API-Wrapper: bevorzugt Host-api() (credentials:'include'), sonst fetch. ──
   // window.api() löst JSON bereits auf UND wirft bei !ok einen Error mit .status.
+  // Für JSON-Endpoints (api/list). Discovery + JSON-Daten laufen hierüber.
   function callApi(path, opts) {
     if (typeof window.api === 'function') return Promise.resolve(window.api(path, opts));
     return fetch(path, {
@@ -69,6 +85,20 @@
         throw err;
       }
       return r.json();
+    });
+  }
+
+  // ── Roh-Text-Wrapper für /api/file/raw (HTML-Template + JSON-Dateien). ──
+  // file/raw liefert rohen Dateiinhalt; window.api() würde JSON-parsen wollen,
+  // deshalb hier IMMER direkt fetch() (same-origin im Parent, Status 200 verifiziert).
+  function callApiText(path, opts) {
+    return fetch(path, { credentials: 'same-origin', ...opts }).then((r) => {
+      if (!r.ok) {
+        const err = new Error('HTTP ' + r.status);
+        err.status = r.status;
+        throw err;
+      }
+      return r.text();
     });
   }
 
@@ -104,15 +134,96 @@
     return null;
   }
 
-  // Baut die file/raw-URL für ein HTML-Dashboard. ORIGIN-RELATIV (führender Slash):
-  // die Seiten-URL ist /session/<id>, ein relativer Pfad würde zu /session/api/… falsch
-  // auflösen. inline=1 ist für .html PFLICHT, sonst Download. Cache-Bust per &t=…
-  function buildFrameUrl(sid, relPath) {
-    return '/api/file/raw'
-      + '?session_id=' + encodeURIComponent(sid)
-      + '&path=' + encodeURIComponent(relPath)
-      + '&inline=1'
-      + '&t=' + Date.now();
+  // ───────────────────────────────────────────────────────────────────────────
+  //  PARENT-SEITIGES DATEN-/HTML-LADEN  (das iframe macht KEINEN fetch mehr)
+  // ───────────────────────────────────────────────────────────────────────────
+
+  // Leitet den Ordner eines Dashboards aus seinem htmlPath ab.
+  // 'a/b/dashboard.html' → 'a/b';  'dashboard.html' (Root) → ''.
+  function dashboardFolder(htmlPath) {
+    const i = String(htmlPath || '').lastIndexOf('/');
+    return i >= 0 ? htmlPath.slice(0, i) : '';
+  }
+
+  // loadDashboardData(sid, folder): listet '<folder>/daten', holt jede *.json roh,
+  // parst sie (einzelne Fehler werden übersprungen), sortiert nach 'date' (falls da).
+  // Gibt { rows, folder } zurück. Wirft NICHT bei fehlendem daten/-Ordner — gibt dann
+  // einfach rows:[] zurück (das Dashboard zeigt seinen eigenen Hinweis).
+  async function loadDashboardData(sid, folder) {
+    const datenDir = folder ? (folder + '/daten') : 'daten';
+    let entries = [];
+    try {
+      const listPath = 'api/list?session_id=' + encodeURIComponent(sid)
+        + '&path=' + encodeURIComponent(datenDir);
+      const res = await callApi(listPath);
+      entries = (res && Array.isArray(res.entries)) ? res.entries : [];
+    } catch (_) {
+      // daten/ existiert nicht oder nicht listbar → keine Daten.
+      return { rows: [], folder };
+    }
+
+    const files = entries.filter((e) =>
+      e && e.type !== 'dir' && e.is_dir !== true && /\.json$/i.test(e.name || ''));
+
+    const rows = [];
+    for (const f of files) {
+      const rel = f.path || (datenDir + '/' + f.name);
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const txt = await callApiText(
+          '/api/file/raw?session_id=' + encodeURIComponent(sid)
+            + '&path=' + encodeURIComponent(rel));
+        const obj = JSON.parse(txt);
+        if (obj && typeof obj === 'object') rows.push(obj);
+      } catch (_) {
+        // Defekte/nicht lesbare Datei → überspringen (robust).
+      }
+    }
+
+    // Nach 'date' sortieren, falls vorhanden.
+    rows.sort((a, b) => {
+      const da = a && a.date != null ? String(a.date) : '';
+      const db = b && b.date != null ? String(b.date) : '';
+      return da.localeCompare(db);
+    });
+
+    return { rows, folder };
+  }
+
+  // loadDashboardHtml(sid, htmlPath): holt das HTML-Template roh (Text).
+  // ORIGIN-RELATIV (führender Slash): die Seiten-URL ist /session/<id>.
+  function loadDashboardHtml(sid, htmlPath) {
+    return callApiText(
+      '/api/file/raw?session_id=' + encodeURIComponent(sid)
+        + '&path=' + encodeURIComponent(htmlPath));
+  }
+
+  // buildSrcdoc(htmlTemplate, rows, meta): injiziert einen Daten-Block in das Template.
+  // SICHERHEIT (PFLICHT): JSON.stringify kann '</script>' enthalten und damit den
+  // Inline-<script> vorzeitig schließen (Breakout/XSS). Wir ersetzen daher in der
+  // JSON-Ausgabe JEDES '</' durch '<\/'. Im JSON-String-Kontext ist '<\/' identisch
+  // zu '</', aber der HTML-Parser sieht kein schließendes </script> mehr.
+  function buildSrcdoc(htmlTemplate, rows, meta) {
+    const safe = (val) => JSON.stringify(val == null ? null : val).replace(/<\//g, '<\\/');
+    const dataScript =
+      '<script>window.LOKI_DATA = ' + safe(rows) + ';'
+      + 'window.LOKI_DASHBOARD = ' + safe(meta) + ';<\/script>';
+
+    const html = String(htmlTemplate || '');
+
+    // Bevorzugt direkt nach dem ersten <head> einsetzen, sonst am Anfang von <body>,
+    // sonst ganz vorn. Case-insensitive, toleriert Attribute (<head ...>, <body ...>).
+    const headMatch = html.match(/<head[^>]*>/i);
+    if (headMatch) {
+      const at = headMatch.index + headMatch[0].length;
+      return html.slice(0, at) + dataScript + html.slice(at);
+    }
+    const bodyMatch = html.match(/<body[^>]*>/i);
+    if (bodyMatch) {
+      const at = bodyMatch.index + bodyMatch[0].length;
+      return html.slice(0, at) + dataScript + html.slice(at);
+    }
+    return dataScript + html;
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -250,8 +361,9 @@
   // ───────────────────────────────────────────────────────────────────────────
   //  RECHTS  — iframe setzen / leeren
   // ───────────────────────────────────────────────────────────────────────────
-  // openDashboard(htmlPath): sandboxed iframe mit der verifizierten file/raw-URL setzen.
-  function openDashboard(htmlPath) {
+  // openDashboard(htmlPath): Daten + HTML PARENT-seitig laden, Daten via srcdoc +
+  // window.LOKI_DATA in ein sandboxed iframe injizieren. KEIN iframe.src/fetch im iframe.
+  async function openDashboard(htmlPath) {
     if (!htmlPath) return;
     const sid = getSessionId();
     const view = document.getElementById('lokiDashView');
@@ -264,21 +376,55 @@
     }
 
     selectedPath = htmlPath;
+    renderList(); // Auswahl sofort markieren
+    showViewMessage(view, 'Lade Dashboard…');
 
-    // View leeren, frischen sandboxed iframe einsetzen.
+    const folder = dashboardFolder(htmlPath);
+
+    // 1) HTML-Template holen (Pflicht — ohne Template kein Dashboard).
+    let htmlTemplate;
+    try {
+      htmlTemplate = await loadDashboardHtml(sid, htmlPath);
+    } catch (e) {
+      const status = e && e.status;
+      let msg = '⚠️ Dashboard-HTML konnte nicht geladen werden';
+      if (status === 404) msg += ' (404 — Datei nicht gefunden)';
+      else if (status === 503) msg += ' (503 — Dienst nicht verfügbar)';
+      else if (e && e.message) msg += ': ' + e.message;
+      showViewMessage(view, msg + '.');
+      toast(msg, 'error');
+      return;
+    }
+
+    // Falls inzwischen ein anderes Dashboard gewählt wurde → Ergebnis verwerfen.
+    if (selectedPath !== htmlPath) return;
+
+    // 2) Daten holen (Fehler hier sind weich → rows:[], Dashboard zeigt eigenen Hinweis).
+    let data;
+    try {
+      data = await loadDashboardData(sid, folder);
+    } catch (_) {
+      data = { rows: [], folder };
+    }
+    if (selectedPath !== htmlPath) return;
+
+    // 3) srcdoc bauen + setzen. sandbox NUR allow-scripts (kein API-Zugriff im iframe).
+    const srcdoc = buildSrcdoc(htmlTemplate, data.rows, {
+      folder: folder,
+      count: data.rows.length,
+    });
+
     view.innerHTML = '';
     const iframe = document.createElement('iframe');
     iframe.className = 'loki-dash-frame';
-    // SICHERHEIT: sandbox ist ZWINGEND. allow-same-origin hier, damit das Dashboard
-    // im iframe seine eigene session_id-relative File-API (api/list, api/file/raw)
-    // same-origin ansprechen kann (Daten laden). allow-scripts für die Dashboard-Logik.
-    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+    // SICHERHEIT: sandbox ist ZWINGEND. allow-same-origin wird NICHT gesetzt — das
+    // iframe braucht keinen API-Zugriff mehr (Parent reicht die Daten via srcdoc durch).
+    // Bei srcdoc greift das sandbox-Attribut, nicht der Server-CSP der file/raw-Antwort.
+    iframe.setAttribute('sandbox', 'allow-scripts');
     iframe.setAttribute('title', 'Dashboard');
-    iframe.src = buildFrameUrl(sid, htmlPath);
+    iframe.removeAttribute('src');
+    iframe.srcdoc = srcdoc;
     view.appendChild(iframe);
-
-    // Aktiven Zustand in der Liste markieren.
-    renderList();
   }
 
   // Zeigt im View-Bereich eine Klartext-Meldung (leerer/Fehler-Zustand).
@@ -297,7 +443,9 @@
     const view = document.getElementById('lokiDashView');
     if (!view) return;
     const iframe = view.querySelector('.loki-dash-frame');
-    if (iframe) { try { iframe.src = 'about:blank'; } catch (_) {} }
+    if (iframe) {
+      try { iframe.removeAttribute('srcdoc'); iframe.src = 'about:blank'; } catch (_) {}
+    }
     showViewMessage(view, 'Wähle links ein Dashboard aus.');
   }
 
@@ -431,7 +579,9 @@
     const view = document.getElementById('lokiDashView');
     if (view) {
       const iframe = view.querySelector('.loki-dash-frame');
-      if (iframe) { try { iframe.src = 'about:blank'; } catch (_) {} }
+      if (iframe) {
+        try { iframe.removeAttribute('srcdoc'); iframe.src = 'about:blank'; } catch (_) {}
+      }
     }
   }
 
