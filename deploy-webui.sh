@@ -1,9 +1,16 @@
 #!/bin/sh
-# Holt alle Loki-Extensions frisch von GitHub in den webui-extension-Ordner. Im hermeswebui-Container ausführen.
+# Holt alle aktiven Loki-Extensions frisch von GitHub in den webui-extension-Ordner.
+# Im hermeswebui-Container ausführen:  curl -fsSL .../deploy-webui.sh | sh
 EXT="${HERMES_WEBUI_EXTENSION_DIR:-/home/hermeswebui/.hermes/webui-extension}"
 BASE="https://raw.githubusercontent.com/oliverhees/lokyy-webui-extensions/main"
-for f in loki-orchestrator/static/loki-orchestrator.js loki-orchestrator/static/loki-orchestrator.css \
-         loki-branding/static/loki.js loki-branding/static/loki.css \
+
+# Obsolete Extensions entfernen (loki-orchestrator = Multi-Agent-Chat, verworfen zugunsten
+# Single-Agent + Skills/MCPs; Loki OS geht Richtung Dashboards + Home-Shell).
+for old in loki-orchestrator.js loki-orchestrator.css; do
+  [ -f "$EXT/$old" ] && rm -f "$EXT/$old" && echo "RM $old (obsolet)"
+done
+
+for f in loki-branding/static/loki.js loki-branding/static/loki.css \
          mcp-manager/static/mcp-manager.js mcp-manager/static/mcp-manager.css \
          agent-importer/static/agent-importer.js agent-importer/static/agent-importer.css; do
   name=$(basename "$f")
