@@ -3,9 +3,16 @@
  * Dark-Theme; Akzent über var(--accent…) mit sicheren Fallbacks (Loki-Orange).
  */
 
-/* Titel ("Loki OS") nach LINKS. Die Bar ist von Haus aus justify-content:center;
-   wir überschreiben auf flex-start, damit Logo/Titel links kleben. */
-header.app-titlebar.loki-has-notif { justify-content: flex-start; }
+/* 3-Spalter-Top-Bar: Logo/Titel LINKS · Nachrichten-Counter MITTE · Glocke RECHTS.
+   Bar ist von Haus aus justify-content:center → flex-start für Titel links. */
+header.app-titlebar.loki-has-notif { justify-content: flex-start; position: relative; }
+
+/* Counter ("X Nachrichten", #appTitlebarSub) sitzt im selben inner-Block wie der
+   Titel → wir lösen ihn per absoluter Positionierung und zentrieren ihn in der Bar. */
+header.app-titlebar.loki-has-notif #appTitlebarSub {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  margin: 0; white-space: nowrap;
+}
 
 /* Glocke IMMER ganz rechts. Der .app-titlebar-spacer (flex:1) dehnt sich in
    dieser Bar NICHT zuverlässig (verifiziert: Glocke landete sonst bei x≈179).
