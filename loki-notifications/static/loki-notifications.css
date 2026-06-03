@@ -44,6 +44,10 @@ header.app-titlebar.loki-has-notif .loki-notif-wrap {
 }
 
 /* ── Dropdown-Panel ──────────────────────────────────────────────────────── */
+/* WICHTIG: display:flex unten würde das native [hidden]-Attribut aushebeln
+   ([hidden]{display:none} hat geringe Spezifität). Darum hidden explizit
+   erzwingen, sonst steht das Panel permanent offen. */
+.loki-notif-panel[hidden] { display: none !important; }
 .loki-notif-panel {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 1000;
   width: 340px; max-height: 70vh; overflow: hidden;
