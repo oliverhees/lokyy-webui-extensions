@@ -26,8 +26,11 @@
  *      (so speichert die Host-UI selbst — static/workspace.js). Danach lädt der Parent
  *      die daten/*.json frisch und antwortet
  *      `postMessage({type:'loki:save:result', reqId, ok, rows|error})` — das Dashboard
- *      kann seine Charts live neu rendern. Das iframe bleibt sandbox="allow-scripts";
- *      es bekommt weiterhin KEINEN API-Zugriff, es darf nur anfragen.
+ *      kann seine Charts live neu rendern. Das iframe ist sandbox="allow-scripts
+ *      allow-forms" (allow-forms ist Pflicht, sonst feuert das submit-Event nie —
+ *      siehe Kommentar an der iframe-Erstellung); es bekommt weiterhin KEINEN
+ *      API-Zugriff, es darf nur anfragen. Native Submissions canceled der injizierte
+ *      window-capture-Listener, bevor sie navigieren können.
  *
  * WARUM srcdoc + window.LOKI_DATA STATT iframe.src=file/raw?
  * -----------------------------------------------------------------------------
@@ -260,14 +263,18 @@
       '    p.resolve(m);' +
       '  } else { p.reject(new Error(m.error || "Speichern fehlgeschlagen")); }' +
       '});' +
-      // SICHERHEITSNETZ: native Form-Submission global unterbinden (capture-phase).
-      // Die Sandbox hat KEIN allow-forms — ein natives Submit würde hart geblockt
-      // ("Blocked form submission … sandboxed"). Dashboards, deren submit-Handler
-      // ev.preventDefault() vergisst, laufen so trotzdem fehlerfrei: ihr eigener
-      // Handler feuert weiterhin (capture stoppt die Propagation nicht), nur die
-      // native Submission entfällt. ACHTUNG: form.submit() (programmatisch) feuert
-      // KEIN submit-Event und bleibt geblockt — Dashboards müssen LOKI.save nutzen.
-      'document.addEventListener("submit", function (ev) { ev.preventDefault(); }, true);' +
+      // SICHERHEITSNETZ: JEDE native Form-Submission canceln — window-capture, und
+      // weil dieser Helper als ERSTES Script im Dokument läuft, ist es der erste
+      // registrierte Listener: er feuert vor jedem Dashboard-Code und preventDefaultet,
+      // bevor irgendwer die Submission umleiten oder durchlassen könnte.
+      // KONTEXT (live verifiziert 2026-06-07): Die Sandbox hat allow-forms — NÖTIG,
+      // denn ohne allow-forms blockt Chromium die Submission VOR dem submit-Event
+      // (der Event feuert nie, kein Handler läuft, LOKI.save unerreichbar). Mit
+      // allow-forms feuert der Event normal; dieses Netz sorgt dafür, dass die
+      // native Navigation trotzdem NIE stattfindet. Dashboard-Handler laufen weiter
+      // (preventDefault stoppt keine Propagation). form.submit() (programmatisch,
+      // ohne Event) bleibt verboten — der Skill schreibt LOKI.save vor.
+      'window.addEventListener("submit", function (ev) { ev.preventDefault(); }, true);' +
       '})();';
     const dataScript =
       '<script>window.LOKI_DATA = ' + safe(rows) + ';'
@@ -619,7 +626,7 @@
     }
     if (selectedPath !== htmlPath) return;
 
-    // 3) srcdoc bauen + setzen. sandbox NUR allow-scripts (kein API-Zugriff im iframe).
+    // 3) srcdoc bauen + setzen. sandbox: allow-scripts + allow-forms, KEIN allow-same-origin.
     const srcdoc = buildSrcdoc(htmlTemplate, data.rows, {
       folder: folder,
       count: data.rows.length,
@@ -631,7 +638,16 @@
     // SICHERHEIT: sandbox ist ZWINGEND. allow-same-origin wird NICHT gesetzt — das
     // iframe braucht keinen API-Zugriff mehr (Parent reicht die Daten via srcdoc durch).
     // Bei srcdoc greift das sandbox-Attribut, nicht der Server-CSP der file/raw-Antwort.
-    iframe.setAttribute('sandbox', 'allow-scripts');
+    //
+    // allow-forms ist PFLICHT (live verifiziert 2026-06-07): OHNE allow-forms blockt
+    // Chromium die Form-Submission VOR dem submit-Event — der Event feuert NIE, kein
+    // Handler (auch kein preventDefault/LOKI.save) läuft je. Mit allow-forms feuert
+    // das submit-Event; der injizierte window-capture-Listener (buildSrcdoc, als
+    // ERSTER registriert) canceled dann JEDE native Submission, bevor irgendein
+    // Dashboard-Code sie umleiten könnte → keine Navigation, kein Daten-Abfluss
+    // über form-action. Exfiltration via fetch/img wäre aus dem opaken Origin ohnehin
+    // möglich — allow-forms öffnet keinen neuen Kanal, solange das Netz zuerst läuft.
+    iframe.setAttribute('sandbox', 'allow-scripts allow-forms');
     iframe.setAttribute('title', 'Dashboard');
     iframe.removeAttribute('src');
     iframe.srcdoc = srcdoc;

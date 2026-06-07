@@ -51,8 +51,9 @@
   Liegt window.LOKI_DATA leer/nicht vor, zeigt das Dashboard einen klaren
   Hinweis — das FORMULAR bleibt aber nutzbar (erster Eintrag muss möglich sein).
 
-  Die Extension setzt sandbox="allow-scripts" (KEIN allow-same-origin nötig,
-  da hier kein API-Zugriff mehr stattfindet).
+  Die Extension setzt sandbox="allow-scripts allow-forms" (KEIN allow-same-origin,
+  da hier kein API-Zugriff stattfindet; allow-forms ist nötig, damit das
+  submit-Event überhaupt feuert — native Submission canceled die Extension global).
   ============================================================================
 -->
 <style>

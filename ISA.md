@@ -4,7 +4,7 @@ task: Dashboard Write-Back — Formulare schreiben Daten zurück in den Workspac
 slug: dashboard-write-back
 effort: E3
 phase: complete
-progress: 37/37
+progress: 38/38
 mode: build
 started: 2026-06-07T00:00:00Z
 updated: 2026-06-07T00:00:00Z
@@ -55,7 +55,7 @@ Die loki-dashboards-Extension besitzt eine sichere postMessage→`/api/file/save
 - [x] ISC-14: Fehler-Result `{ok:false, error}` wird ans iframe zurückgepostet (inkl. Hinweis auf evtl. fehlenden `daten/`-Ordner)
 - [x] ISC-15: `reqId` aus der Anfrage wird im Result unverändert zurückgegeben (Promise-Zuordnung im iframe)
 - [x] ISC-16: Toast bei Erfolg und Fehler über den verifizierten Host-`showToast`-Wrapper
-- [x] ISC-17: iframe-Attribut bleibt exakt `sandbox="allow-scripts"`
+- [x] ISC-17: iframe-Attribut ist `sandbox="allow-scripts allow-forms"` — KEIN allow-same-origin (refined 2026-06-07, siehe Decisions/Changelog)
 - [x] ISC-18: `node --check` auf loki-dashboards.js läuft fehlerfrei
 
 ### Anti-Kriterien
@@ -84,6 +84,7 @@ Die loki-dashboards-Extension besitzt eine sichere postMessage→`/api/file/save
 ### Nachtrag 2026-06-07 (Live-Befund: "Blocked form submission … sandboxed")
 - [x] ISC-36: Injizierter Helper unterbindet native Form-Submissions global (capture-phase `submit` → `preventDefault`), Dashboard-eigene Handler feuern weiter
 - [x] ISC-37: Builder-Skill verbietet native Submission + `form.submit()` + `autofocus` explizit und schreibt `ev.preventDefault()` als erste Handler-Zeile vor
+- [x] ISC-38: Live-Experiment belegt: mit `allow-forms` feuert das submit-Event im sandboxed srcdoc-iframe und `preventDefault` greift (ohne: Event feuert nie)
 
 ## Test Strategy
 
@@ -117,8 +118,14 @@ Die loki-dashboards-Extension besitzt eine sichere postMessage→`/api/file/save
 - 2026-06-07: Forge-Lineage-Hinweis: codex CLI auf diesem System nicht installiert — Forge-Agent lief mit Claude-Reasoning statt GPT-5.4. Drei Fixes (Toast-Guard, Reentrancy-Guard, Leerfeld-Validierung) trotzdem korrekt; echter Cross-Vendor-Check steht damit aus.
 - 2026-06-07: Review-Härtungen übernommen: stabile Intra-Tag-Sortierung (Dateiname als Sekundärschlüssel) + defensive `..`-Prüfung auf den Ordner-Teil in handleSaveRequest.
 - 2026-06-07: EnterPlanMode übersprungen — Ansatz wurde im Vorturn explizit freigegeben ("Ja, baut das bitte mal ein").
+- 2026-06-07: refined: ISC-17 von `allow-scripts` auf `allow-scripts allow-forms` — Live-Experiment im echten Chrome bewies: ohne allow-forms dispatcht Chromium das submit-Event NICHT (Block vor Event-Dispatch), Write-Back via submit-Handler ist damit strukturell unmöglich. Sicherheitsnetz von document- auf window-capture verlegt (als erster registrierter Listener canceled es jede native Submission vor fremdem Code). Kein neuer Exfil-Kanal: fetch/img-Beacons sind aus dem opaken Origin ohnehin möglich.
 
 ## Changelog
+
+- conjectured: Ein globaler capture-phase preventDefault-Listener fängt jede native Form-Submission im sandboxed iframe ab — allow-forms wird nicht gebraucht.
+  refuted by: Live-Experiment 2026-06-07 in Olivers Chrome — in sandbox="allow-scripts" feuert das submit-Event NIE (Chromium blockt VOR dem Event-Dispatch); mit allow-forms feuert es und preventDefault greift. Der Block-Fehler trat trotz korrektem Dashboard-Code und Sicherheitsnetz weiter auf.
+  learned: Browser-Sicherheitsmechanismen können VOR der Event-Pipeline greifen — ein Event-Listener kann nur abfangen, was überhaupt dispatcht wird. Solche Annahmen mit einem Minimal-Experiment im echten Browser testen statt aus der Spec zu schließen.
+  criterion now: ISC-17 (sandbox="allow-scripts allow-forms") + ISC-38 (Experiment-Beleg, dass das submit-Event feuert und preventDefault greift).
 
 - conjectured: Dashboards nutzen Formulare ausschließlich über das dokumentierte Muster (submit-Handler mit preventDefault + LOKI.save) — Beispiel und Skill reichen als Leitplanke.
   refuted by: Live-Befund 2026-06-07 — agent-gebautes Fitness-Dashboard machte native Form-Submission, Sandbox blockte hart ("Blocked form submission … 'allow-forms' is not set"); Speichern ging gar nicht.

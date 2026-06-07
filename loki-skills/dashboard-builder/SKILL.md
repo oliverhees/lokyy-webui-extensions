@@ -51,19 +51,19 @@ Erst wenn 1–4 geklärt sind: bauen.
 - **Kein fetch, kein XMLHttpRequest, kein eval** — das iframe hat keinen API-Zugriff
   (sandbox ohne allow-same-origin, harte Browser-Grenze). Lesen NUR aus `window.LOKI_DATA`,
   Schreiben NUR über `window.LOKI.save()`.
-- **Formulare: NIEMALS native Submission.** Die Sandbox hat KEIN `allow-forms` — ein
-  natives Form-Submit wird vom Browser hart geblockt ("Blocked form submission …
-  sandboxed"). Verbindlich:
+- **Formulare: NIEMALS native Submission.** Verbindlich:
   - `submit`-Handler MUSS als erste Zeile `ev.preventDefault()` aufrufen, danach
     `LOKI.save(...)` (siehe Minimalmuster unten).
   - **NIEMALS `form.submit()` programmatisch aufrufen** — das feuert kein submit-Event,
-    umgeht jeden Handler und wird geblockt. Stattdessen `form.requestSubmit()` oder den
-    Handler direkt aufrufen.
-  - Kein `action`-/`method`-Attribut am `<form>` nötig — es wird nie nativ abgeschickt.
+    umgeht jeden Handler (auch das Sicherheitsnetz der Extension). Stattdessen
+    `form.requestSubmit()` oder den Handler direkt aufrufen.
+  - Kein `action`-/`method`-Attribut am `<form>` — es wird nie nativ abgeschickt.
   - Kein `autofocus`-Attribut verwenden (wird im Sandbox-iframe geblockt, erzeugt nur
     Konsolen-Fehler).
-  Die Extension preventDefaultet native Submissions zusätzlich global als Sicherheitsnetz —
-  darauf verlassen darf sich ein Dashboard aber nicht.
+  Hintergrund: Das iframe läuft mit `sandbox="allow-scripts allow-forms"`. Die Extension
+  canceled JEDE native Submission über einen zuerst registrierten window-capture-Listener
+  (Sicherheitsnetz) — darauf verlassen darf sich ein Dashboard aber nicht; der eigene
+  `preventDefault` bleibt Pflicht.
 - **Dark Theme**: Hintergrund `#0b0d16`, Panels `#14161f`, Border `#2a2d3a`,
   Text `#e8e8ee`, Muted `#9aa0b4`, Akzent Orange `#F97316`.
 - **Alle Nutzerdaten escapen** (esc()-Helper) — Datensätze können beliebigen Text enthalten.
