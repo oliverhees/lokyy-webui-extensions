@@ -4,7 +4,7 @@ task: Dashboard Write-Back — Formulare schreiben Daten zurück in den Workspac
 slug: dashboard-write-back
 effort: E3
 phase: complete
-progress: 35/35
+progress: 37/37
 mode: build
 started: 2026-06-07T00:00:00Z
 updated: 2026-06-07T00:00:00Z
@@ -81,6 +81,10 @@ Die loki-dashboards-Extension besitzt eine sichere postMessage→`/api/file/save
 - [x] ISC-34: `setup-skills.sh` installiert auch `dashboard-builder`
 - [x] ISC-35: Git-Commit auf `main` umfasst alle geänderten/neuen Dateien (Push = Voraussetzung fürs Live-Deployment)
 
+### Nachtrag 2026-06-07 (Live-Befund: "Blocked form submission … sandboxed")
+- [x] ISC-36: Injizierter Helper unterbindet native Form-Submissions global (capture-phase `submit` → `preventDefault`), Dashboard-eigene Handler feuern weiter
+- [x] ISC-37: Builder-Skill verbietet native Submission + `form.submit()` + `autofocus` explizit und schreibt `ev.preventDefault()` als erste Handler-Zeile vor
+
 ## Test Strategy
 
 | isc | type | check | threshold | tool |
@@ -115,6 +119,11 @@ Die loki-dashboards-Extension besitzt eine sichere postMessage→`/api/file/save
 - 2026-06-07: EnterPlanMode übersprungen — Ansatz wurde im Vorturn explizit freigegeben ("Ja, baut das bitte mal ein").
 
 ## Changelog
+
+- conjectured: Dashboards nutzen Formulare ausschließlich über das dokumentierte Muster (submit-Handler mit preventDefault + LOKI.save) — Beispiel und Skill reichen als Leitplanke.
+  refuted by: Live-Befund 2026-06-07 — agent-gebautes Fitness-Dashboard machte native Form-Submission, Sandbox blockte hart ("Blocked form submission … 'allow-forms' is not set"); Speichern ging gar nicht.
+  learned: Verträge, die nur in Doku/Beispielen leben, halten agent-generierten Code nicht — die Plattform muss den häufigsten Fehlweg selbst entschärfen (Sicherheitsnetz im injizierten Helper) UND der Skill muss das Verbot explizit aussprechen.
+  criterion now: ISC-36 (globales capture-phase preventDefault im Helper) + ISC-37 (explizites Skill-Verbot nativer Submission, form.submit(), autofocus).
 
 - conjectured: Ein Save-Result darf bedingungslos quittiert werden (Toast), sobald der Schreibvorgang abgeschlossen ist.
   refuted by: Forge-Review — bei Dashboard-Wechsel mid-save erschiene der Erfolgs-Toast im Kontext des falschen, inzwischen sichtbaren Dashboards.

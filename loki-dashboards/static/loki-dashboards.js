@@ -260,6 +260,14 @@
       '    p.resolve(m);' +
       '  } else { p.reject(new Error(m.error || "Speichern fehlgeschlagen")); }' +
       '});' +
+      // SICHERHEITSNETZ: native Form-Submission global unterbinden (capture-phase).
+      // Die Sandbox hat KEIN allow-forms — ein natives Submit würde hart geblockt
+      // ("Blocked form submission … sandboxed"). Dashboards, deren submit-Handler
+      // ev.preventDefault() vergisst, laufen so trotzdem fehlerfrei: ihr eigener
+      // Handler feuert weiterhin (capture stoppt die Propagation nicht), nur die
+      // native Submission entfällt. ACHTUNG: form.submit() (programmatisch) feuert
+      // KEIN submit-Event und bleibt geblockt — Dashboards müssen LOKI.save nutzen.
+      'document.addEventListener("submit", function (ev) { ev.preventDefault(); }, true);' +
       '})();';
     const dataScript =
       '<script>window.LOKI_DATA = ' + safe(rows) + ';'
