@@ -22,8 +22,16 @@ research/
 ├── schema.json        ← DER VERTRAG: welche Felder, welche Typen
 ├── daten/             ← ein JSON pro Lauf
 │   └── 2026-06-03.json
-└── dashboard.html     ← die Anzeige (baut ein ANDERER Skill; hier NICHT nötig)
+└── dashboard.html     ← die Anzeige (baut der Skill `dashboard-builder`; hier NICHT nötig)
 ```
+
+**Zwei Schreibwege, EIN Vertrag:** In `daten/` schreiben sowohl DU (dieser Skill,
+agent-seitig) als auch ggf. ein **Formular im Dashboard selbst** (Nutzer-Eingaben via
+`LOKI.save()`, durch die loki-dashboards-Extension validiert und geschrieben — siehe
+`dashboard-builder`). Beide Wege folgen exakt demselben `schema.json`. Rechne also damit,
+dass in `daten/` auch Dateien liegen, die du nicht selbst geschrieben hast — auch mit
+Suffix-Namen wie `2026-06-07_morgens.json` (mehrere Einträge pro Tag). Sie sind
+gleichberechtigte Datensätze: niemals löschen oder "aufräumen", beim Lesen mit einbeziehen.
 
 **Regeln für die Daten — strikt einhalten:**
 - **Ein Datensatz = eine Datei** `daten/<YYYY-MM-DD>.json`. Der Dateiname ist das `date`.

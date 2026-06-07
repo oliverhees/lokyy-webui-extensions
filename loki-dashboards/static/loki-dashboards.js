@@ -1,7 +1,7 @@
 /*
  * Lokyy OS — Loki Dashboards Extension für Hermes WebUI (nesquena/hermes-webui)
  * --------------------------------------------------------------------------
- * Reine DASHBOARD-ANZEIGE. KEIN Multi-Agent, KEIN Chat.
+ * DASHBOARD-ANZEIGE + WRITE-BACK. KEIN Multi-Agent, KEIN Chat.
  *
  * Was es tut:
  *   1. Eigener Nav-Eintrag "📊 Dashboards" in der Rail + Sidebar-Nav (ganz oben).
@@ -17,6 +17,17 @@
  *      Das fertige HTML wird per `iframe.srcdoc` gesetzt (NICHT iframe.src).
  *   5. Refresh-Button (lädt Liste + aktives Dashboard neu). Robust gegen fehlende API.
  *   6. hidePanel: iframe.srcdoc/src leeren (kein Hintergrund-Laden).
+ *   7. WRITE-BACK (Formulare → Workspace): Das Dashboard kann Datensätze ZURÜCKSPEICHERN.
+ *      Es ruft `LOKI.save(record, {file?})` auf (von buildSrcdoc injiziert); das sendet
+ *      `postMessage({type:'loki:save', reqId, file, data})` an den PARENT. Der Parent
+ *      validiert hart (nur aktives Dashboard, nur dessen 'daten/'-Ordner, nur *.json,
+ *      Dateiname sanitized, max. 256 KB, 'date' wird ergänzt) und schreibt über den
+ *      verifizierten Host-Endpoint  POST /api/file/save  {session_id, path, content}
+ *      (so speichert die Host-UI selbst — static/workspace.js). Danach lädt der Parent
+ *      die daten/*.json frisch und antwortet
+ *      `postMessage({type:'loki:save:result', reqId, ok, rows|error})` — das Dashboard
+ *      kann seine Charts live neu rendern. Das iframe bleibt sandbox="allow-scripts";
+ *      es bekommt weiterhin KEINEN API-Zugriff, es darf nur anfragen.
  *
  * WARUM srcdoc + window.LOKI_DATA STATT iframe.src=file/raw?
  * -----------------------------------------------------------------------------
@@ -165,6 +176,11 @@
     const files = entries.filter((e) =>
       e && e.type !== 'dir' && e.is_dir !== true && /\.json$/i.test(e.name || ''));
 
+    // Deterministische Lese-Reihenfolge nach Dateiname: zusammen mit dem stabilen
+    // Array-Sort unten ergibt das eine verlässliche Intra-Tag-Ordnung für
+    // Suffix-Dateien wie '2026-06-07_morgens.json' / '2026-06-07_abends.json'.
+    files.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+
     const rows = [];
     for (const f of files) {
       const rel = f.path || (datenDir + '/' + f.name);
@@ -180,7 +196,8 @@
       }
     }
 
-    // Nach 'date' sortieren, falls vorhanden.
+    // Nach 'date' sortieren, falls vorhanden. Array#sort ist stabil (ES2019) —
+    // Datensätze mit gleichem 'date' behalten die Dateinamen-Reihenfolge von oben.
     rows.sort((a, b) => {
       const da = a && a.date != null ? String(a.date) : '';
       const db = b && b.date != null ? String(b.date) : '';
@@ -203,11 +220,51 @@
   // Inline-<script> vorzeitig schließen (Breakout/XSS). Wir ersetzen daher in der
   // JSON-Ausgabe JEDES '</' durch '<\/'. Im JSON-String-Kontext ist '<\/' identisch
   // zu '</', aber der HTML-Parser sieht kein schließendes </script> mehr.
+  //
+  // Zusätzlich wird der LOKI-Helper injiziert (WRITE-BACK-Kontrakt fürs Dashboard):
+  //   LOKI.data                  → Alias auf window.LOKI_DATA (Array der Datensätze)
+  //   LOKI.dashboard             → Alias auf window.LOKI_DASHBOARD ({folder, count})
+  //   LOKI.save(record, {file?}) → Promise. Sendet 'loki:save' an den Parent, wartet
+  //                                auf 'loki:save:result' (reqId-gematcht, 10s-Timeout).
+  //                                Bei ok: aktualisiert LOKI_DATA/LOKI.data auf die
+  //                                frischen rows und resolved {ok, file, path, rows}.
+  //   Kein fetch, kein eval — reiner postMessage-Botengang. Der Parent validiert.
   function buildSrcdoc(htmlTemplate, rows, meta) {
     const safe = (val) => JSON.stringify(val == null ? null : val).replace(/<\//g, '<\\/');
+    const helperJs =
+      '(function () {' +
+      '"use strict";' +
+      'var pending = {}; var seq = 0;' +
+      'window.LOKI = {' +
+      '  data: window.LOKI_DATA,' +
+      '  dashboard: window.LOKI_DASHBOARD,' +
+      '  save: function (record, opts) {' +
+      '    opts = opts || {};' +
+      '    return new Promise(function (resolve, reject) {' +
+      '      var reqId = "s" + (++seq) + "_" + Math.random().toString(36).slice(2);' +
+      '      pending[reqId] = { resolve: resolve, reject: reject };' +
+      '      window.parent.postMessage({ type: "loki:save", reqId: reqId, file: opts.file || null, data: record }, "*");' +
+      '      setTimeout(function () {' +
+      '        if (pending[reqId]) { delete pending[reqId]; reject(new Error("Timeout beim Speichern (10s)")); }' +
+      '      }, 10000);' +
+      '    });' +
+      '  }' +
+      '};' +
+      'window.addEventListener("message", function (ev) {' +
+      '  if (ev.source !== window.parent) return;' +
+      '  var m = ev.data;' +
+      '  if (!m || m.type !== "loki:save:result" || !m.reqId || !pending[m.reqId]) return;' +
+      '  var p = pending[m.reqId]; delete pending[m.reqId];' +
+      '  if (m.ok) {' +
+      '    if (Array.isArray(m.rows)) { window.LOKI_DATA = m.rows; window.LOKI.data = m.rows; }' +
+      '    p.resolve(m);' +
+      '  } else { p.reject(new Error(m.error || "Speichern fehlgeschlagen")); }' +
+      '});' +
+      '})();';
     const dataScript =
       '<script>window.LOKI_DATA = ' + safe(rows) + ';'
-      + 'window.LOKI_DASHBOARD = ' + safe(meta) + ';<\/script>';
+      + 'window.LOKI_DASHBOARD = ' + safe(meta) + ';'
+      + helperJs + '<\/script>';
 
     const html = String(htmlTemplate || '');
 
@@ -225,6 +282,152 @@
     }
     return dataScript + html;
   }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  //  WRITE-BACK-BRIDGE  (iframe-Formular → postMessage → POST /api/file/save)
+  // ───────────────────────────────────────────────────────────────────────────
+  // SICHERHEITSMODELL: Das sandboxed iframe (allow-scripts, OHNE allow-same-origin)
+  // hat einen opaken Origin und KEINEN API-Zugriff — hart per Browser-Spec. Es darf
+  // nur per postMessage ANFRAGEN. Der Parent (diese Extension) ist der einzige
+  // Schreiber und validiert jede Anfrage:
+  //   - Quelle:    event.source === contentWindow des AKTIVEN Dashboard-iframes.
+  //                (event.origin ist bei srcdoc-Sandbox 'null' und als Filter
+  //                 unbrauchbar — der source-Vergleich ist der belastbare Check.)
+  //   - Ziel:      NUR '<aktives-dashboard>/daten/<datei>.json'. Kein anderer Ordner.
+  //   - Dateiname: Whitelist ^[A-Za-z0-9._-]+\.json$, '..' / '/' / '\' verboten.
+  //                Fehlt er, wird '<data.date>.json' bzw. '<heute>.json' verwendet.
+  //   - Payload:   Muss ein flaches JSON-Objekt sein (kein Array/String/null),
+  //                max. 256 KB serialisiert. Fehlendes 'date' wird ergänzt
+  //                (Kontrakt von loki-skills/dashboard-data: Pflichtfeld 'date').
+  //   - Endpoint:  POST /api/file/save {session_id, path, content} — exakt der
+  //                Call, mit dem die Host-UI selbst speichert (static/workspace.js,
+  //                gegen Upstream-Code verifiziert).
+  // Nach erfolgreichem Schreiben lädt der Parent daten/*.json frisch und gibt die
+  // rows im Result mit — das Dashboard rendert live neu, ohne iframe-Reload.
+  // HINWEIS: /api/file/save legt fehlende Ordner NICHT verlässlich an. Der
+  // dashboard-builder-Skill erstellt 'daten/' deshalb verpflichtend zur Bauzeit.
+
+  const SAVE_MSG = 'loki:save';
+  const SAVE_RESULT_MSG = 'loki:save:result';
+  const MAX_SAVE_BYTES = 256 * 1024;
+  const SAVE_FILENAME_RE = /^[A-Za-z0-9._-]+\.json$/;
+
+  // Liefert das iframe des aktuell angezeigten Dashboards (oder null).
+  function activeDashFrame() {
+    const view = document.getElementById('lokiDashView');
+    return view ? view.querySelector('.loki-dash-frame') : null;
+  }
+
+  function todayIso() {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+
+  // sanitizeSaveFile(name, dateStr): expliziter Name → strenge Whitelist-Prüfung
+  // (null bei Verstoß = ablehnen, NICHT reparieren). Ohne Namen → '<date>.json'
+  // aus dem 'date'-Feld, sonst '<heute>.json'.
+  function sanitizeSaveFile(name, dateStr) {
+    if (name != null) {
+      const s = String(name);
+      if (s.indexOf('/') >= 0 || s.indexOf('\\') >= 0 || s.indexOf('..') >= 0) return null;
+      if (!SAVE_FILENAME_RE.test(s)) return null;
+      return s;
+    }
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || '')) ? String(dateStr) : todayIso();
+    return d + '.json';
+  }
+
+  // handleSaveRequest(msg): validiert und schreibt. Gibt IMMER ein Result-Objekt
+  // zurück ({ok:true, file, path, rows} | {ok:false, error}) — wirft nie.
+  // WICHTIG: Ziel-Ordner wird SYNCHRON aus selectedPath abgeleitet, bevor ein
+  // await läuft — ein Dashboard-Wechsel während des Speicherns kann das Ziel
+  // nicht mehr verschieben.
+  async function handleSaveRequest(msg) {
+    const sid = getSessionId();
+    if (!sid) return { ok: false, error: 'Keine aktive Session.' };
+    if (!selectedPath) return { ok: false, error: 'Kein Dashboard geöffnet.' };
+
+    const data = msg && msg.data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return { ok: false, error: 'Daten müssen ein JSON-Objekt sein.' };
+    }
+
+    const record = Object.assign({}, data);
+    if (!record.date) record.date = todayIso();
+
+    const file = sanitizeSaveFile(msg.file, record.date);
+    if (!file) {
+      return { ok: false, error: 'Ungültiger Dateiname (erlaubt: A-Za-z0-9._- mit Endung .json).' };
+    }
+
+    let content;
+    try { content = JSON.stringify(record, null, 2); }
+    catch (_) { return { ok: false, error: 'Daten sind nicht JSON-serialisierbar.' }; }
+    if (content.length > MAX_SAVE_BYTES) {
+      return { ok: false, error: 'Daten zu groß (max. 256 KB).' };
+    }
+
+    const folder = dashboardFolder(selectedPath);
+    // Defensiv (host-unabhängige Garantie): der Ordner-Teil stammt zwar aus der
+    // Server-Discovery (nie aus iframe-Input), aber ein '..'-Segment darin wäre
+    // trotzdem ein No-Go — lieber ablehnen als dem Listing blind vertrauen.
+    if (folder && (folder.indexOf('..') >= 0 || folder.indexOf('\\') >= 0)) {
+      return { ok: false, error: 'Ungültiger Dashboard-Pfad.' };
+    }
+    const path = (folder ? folder + '/' : '') + 'daten/' + file;
+
+    try {
+      await callApi('/api/file/save', {
+        method: 'POST',
+        body: JSON.stringify({ session_id: sid, path: path, content: content }),
+      });
+    } catch (e) {
+      const status = e && e.status;
+      let err = 'Speichern fehlgeschlagen';
+      if (status === 404) err += ' (404 — fehlt der Ordner daten/ im Dashboard-Ordner?)';
+      else if (status === 503) err += ' (503 — Dienst nicht verfügbar)';
+      else if (e && e.message) err += ': ' + e.message;
+      return { ok: false, error: err };
+    }
+
+    // Frische Daten für Live-Update im Dashboard (weicher Fehler → rows: null).
+    let rows = null;
+    try { rows = (await loadDashboardData(sid, folder)).rows; } catch (_) {}
+
+    return { ok: true, file: file, path: path, rows: rows };
+  }
+
+  // Globaler message-Listener. Wird genau EINMAL registriert (IIFE ist per
+  // __lokiDashboardsLoaded doppel-load-sicher). Antwortet nur, wenn das anfragende
+  // iframe noch das aktive Dashboard ist.
+  function onDashboardMessage(ev) {
+    const iframe = activeDashFrame();
+    if (!iframe || ev.source !== iframe.contentWindow) return;
+    const msg = ev.data;
+    if (!msg || msg.type !== SAVE_MSG) return;
+
+    const reqId = msg.reqId == null ? null : String(msg.reqId);
+    const pathAtRequest = selectedPath;
+
+    handleSaveRequest(msg).then((result) => {
+      const frameNow = activeDashFrame();
+      // Nur antworten UND toasten, wenn das anfragende iframe noch das aktive
+      // Dashboard ist. Sonst gehört das Ergebnis zu einem nicht mehr sichtbaren
+      // Dashboard — kein Result zustellen (iframe-Promise läuft in seinen 10s-Timeout)
+      // und KEIN Toast, der sonst fälschlich im neuen Dashboard-Kontext erschiene.
+      if (frameNow && frameNow.contentWindow === ev.source && selectedPath === pathAtRequest) {
+        try {
+          ev.source.postMessage(
+            Object.assign({ type: SAVE_RESULT_MSG, reqId: reqId }, result), '*');
+        } catch (_) { /* iframe inzwischen weg → nichts zu tun */ }
+        if (result.ok) toast('💾 Gespeichert: ' + result.file);
+        else toast(result.error, 'error');
+      }
+    });
+  }
+
+  window.addEventListener('message', onDashboardMessage);
 
   // ───────────────────────────────────────────────────────────────────────────
   //  PANEL-DOM  (2-Spalten: Dashboard-Liste links + iframe-Ansicht rechts)

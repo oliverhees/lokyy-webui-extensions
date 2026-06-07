@@ -30,8 +30,26 @@
                                Jeder Datensatz z.B. { date, steps, sleep_h, hrv }.
     - window.LOKI_DASHBOARD   → { folder, count } (Meta-Info, optional nutzbar).
 
+  WRITE-BACK (Formular → Workspace, Vorlage fürs Skill — bitte genau so übernehmen):
+  ---------------------------------------------------------------------------
+    - window.LOKI.save(record, {file?}) → Promise.
+      Sendet den Datensatz per postMessage an die Extension (den Parent); DIE
+      validiert und schreibt ihn als '<ordner>/daten/<datei>.json' über den
+      Host-Endpoint POST /api/file/save. Das Dashboard selbst macht weiterhin
+      KEINEN fetch — es darf nur anfragen.
+    - record: flaches JSON-Objekt. 'date' (YYYY-MM-DD) wird ergänzt falls es fehlt.
+      Felder MÜSSEN dem schema.json des Dashboards entsprechen (Zahl als Zahl!).
+    - file (optional): Dateiname wie '2026-06-07.json'. Default: '<date>.json'
+      (idempotent pro Tag — gleicher Tag überschreibt). Für mehrere Einträge
+      pro Tag einen Suffix nutzen: '<date>_morgens.json'.
+    - Promise resolved mit {ok:true, file, path, rows} — 'rows' sind ALLE frisch
+      geladenen Datensätze: damit direkt neu rendern (Live-Update ohne Reload).
+      Promise rejected mit Error (Validierung, API-Fehler, 10s-Timeout).
+    - Fallback-Pflicht: existiert window.LOKI?.save nicht (alte Extension),
+      Formular deaktivieren und Hinweis zeigen — niemals stumm wegbrechen.
+
   Liegt window.LOKI_DATA leer/nicht vor, zeigt das Dashboard einen klaren
-  Hinweis (statt weiß zu bleiben).
+  Hinweis — das FORMULAR bleibt aber nutzbar (erster Eintrag muss möglich sein).
 
   Die Extension setzt sandbox="allow-scripts" (KEIN allow-same-origin nötig,
   da hier kein API-Zugriff mehr stattfindet).
@@ -82,6 +100,26 @@
   }
   .notice b { color: var(--accent); }
   .muted { color: var(--muted); }
+
+  /* ── Eintrags-Formular (Write-Back via LOKI.save) ── */
+  .form-panel { margin-top: 24px; }
+  .form-grid { display: grid; grid-template-columns: repeat(4, 1fr) auto; gap: 12px; align-items: end; }
+  .field label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .field input {
+    width: 100%; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px;
+    font: inherit;
+  }
+  .field input:focus { outline: none; border-color: var(--accent); }
+  .btn-save {
+    background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    padding: 10px 18px; font: inherit; font-weight: 700; cursor: pointer;
+  }
+  .btn-save:disabled { opacity: .55; cursor: wait; }
+  .form-msg { margin-top: 10px; font-size: 13px; min-height: 18px; }
+  .form-msg.ok { color: #4ade80; }
+  .form-msg.err { color: #f87171; }
+  @media (max-width: 760px) { .form-grid { grid-template-columns: 1fr 1fr; } }
 </style>
 </head>
 <body>
@@ -90,6 +128,31 @@
     <span class="sub" id="sub">lädt…</span>
   </div>
   <div id="content"></div>
+
+  <!-- Eintrags-Formular: schreibt via LOKI.save() zurück in daten/<date>.json -->
+  <div class="panel form-panel">
+    <h2>➕ Eintrag erfassen</h2>
+    <form id="entryForm" class="form-grid" novalidate>
+      <div class="field">
+        <label for="f-date">Datum</label>
+        <input id="f-date" name="date" type="date" required>
+      </div>
+      <div class="field">
+        <label for="f-steps">Schritte</label>
+        <input id="f-steps" name="steps" type="number" min="0" step="1" placeholder="8500" required>
+      </div>
+      <div class="field">
+        <label for="f-sleep">Schlaf (h)</label>
+        <input id="f-sleep" name="sleep_h" type="number" min="0" max="24" step="0.1" placeholder="7.5" required>
+      </div>
+      <div class="field">
+        <label for="f-hrv">HRV (ms)</label>
+        <input id="f-hrv" name="hrv" type="number" min="0" step="1" placeholder="62" required>
+      </div>
+      <button type="submit" class="btn-save" id="saveBtn">💾 Speichern</button>
+    </form>
+    <div class="form-msg" id="formMsg" role="status"></div>
+  </div>
 
 <script>
 (function () {
@@ -185,14 +248,88 @@
   var data = Array.isArray(window.LOKI_DATA) ? window.LOKI_DATA : [];
 
   if (!data.length) {
-    showNotice('<b>Keine Daten übergeben.</b><br>'
+    showNotice('<b>Noch keine Daten.</b><br>'
       + '<span class="muted">Die Loki-Dashboards-Extension reicht die JSON-Dateien '
-      + 'aus dem Ordner <code>daten/</code> via <code>window.LOKI_DATA</code> durch. '
-      + 'Erwartet werden JSON-Dateien (je <code>{date, steps, sleep_h, hrv}</code>).</span>');
-    return;
+      + 'aus dem Ordner <code>daten/</code> via <code>window.LOKI_DATA</code> durch '
+      + '(je <code>{date, steps, sleep_h, hrv}</code>). '
+      + 'Du kannst den ersten Eintrag direkt unten im Formular erfassen.</span>');
+  } else {
+    render(data);
   }
 
-  render(data);
+  // ── Eintrags-Formular (Write-Back via LOKI.save) ──────────────────────────
+  // Submit → LOKI.save(record). Die Extension validiert, schreibt
+  // daten/<date>.json und liefert ALLE frischen rows zurück → live neu rendern.
+  var form = document.getElementById('entryForm');
+  var saveBtn = document.getElementById('saveBtn');
+  var formMsg = document.getElementById('formMsg');
+  var dateInput = document.getElementById('f-date');
+
+  function setMsg(text, kind) {
+    formMsg.textContent = text || '';
+    formMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
+  }
+
+  // Default: heutiges Datum vorbelegen.
+  try { dateInput.value = new Date().toISOString().slice(0, 10); } catch (_) {}
+
+  // Fallback-Pflicht: ohne LOKI.save (alte Extension) Formular deaktivieren —
+  // niemals stumm wegbrechen.
+  if (!window.LOKI || typeof window.LOKI.save !== 'function') {
+    saveBtn.disabled = true;
+    setMsg('Speichern nicht verfügbar — die loki-dashboards-Extension ist veraltet (LOKI.save fehlt).', 'err');
+  } else {
+    // Reentrancy-Guard: schützt gegen Doppel-Submit. saveBtn.disabled blockt nur
+    // den Button-KLICK — ein Enter im Datums-/Zahlenfeld feuert 'submit' trotzdem
+    // und würde sonst einen zweiten LOKI.save auf dieselbe Datei auslösen.
+    var saving = false;
+
+    // numField(id): rohen Feldwert prüfen, BEVOR Number() greift. Number('') === 0,
+    // ein leeres Pflichtfeld würde sonst als 0 gespeichert. Liefert null bei
+    // leer/ungültig, sonst die geparste Zahl.
+    function numField(id) {
+      var raw = document.getElementById(id).value.trim();
+      if (raw === '') return null;
+      var n = Number(raw);
+      return isFinite(n) ? n : null;
+    }
+
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      if (saving) return; // bereits ein Save in flight → ignorieren
+
+      var date = dateInput.value;
+      var steps = numField('f-steps');
+      var sleep_h = numField('f-sleep');
+      var hrv = numField('f-hrv');
+
+      // Schema-Treue: Datum YYYY-MM-DD, alle Zahlenfelder befüllt und numerisch.
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { setMsg('Bitte ein Datum wählen.', 'err'); return; }
+      if (steps === null || sleep_h === null || hrv === null) {
+        setMsg('Bitte alle Felder als Zahl ausfüllen.', 'err'); return;
+      }
+
+      var record = { date: date, steps: steps, sleep_h: sleep_h, hrv: hrv };
+
+      saving = true;
+      saveBtn.disabled = true;
+      setMsg('Speichere…');
+
+      window.LOKI.save(record).then(function (res) {
+        saving = false;
+        saveBtn.disabled = false;
+        setMsg('Gespeichert: ' + res.file, 'ok');
+        if (Array.isArray(res.rows) && res.rows.length) {
+          data = res.rows;
+          render(data); // Live-Update: Karten + Sparkline frisch
+        }
+      }).catch(function (err) {
+        saving = false;
+        saveBtn.disabled = false;
+        setMsg(String(err && err.message || err), 'err');
+      });
+    });
+  }
 })();
 </script>
 </body>
