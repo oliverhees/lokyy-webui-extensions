@@ -392,6 +392,12 @@
     }
     const path = (folder ? folder + '/' : '') + 'daten/' + file;
 
+    // ZWEI-STUFEN-SCHREIBEN (live gegen v0.51.210 verifiziert):
+    //   1. POST /api/file/save  — überschreibt NUR BESTEHENDE Dateien.
+    //      Bei neuer Datei antwortet der Server 404 {"error":"File not found"}.
+    //   2. Fallback bei 404: POST /api/workspace/upload (multipart) — legt die
+    //      Datei NEU an. Exakt der Weg der Host-UI (uploadToWorkspace,
+    //      static/workspace.js): FormData {session_id, path=<Zielordner>, file}.
     try {
       await callApi('/api/file/save', {
         method: 'POST',
@@ -399,11 +405,31 @@
       });
     } catch (e) {
       const status = e && e.status;
-      let err = 'Speichern fehlgeschlagen';
-      if (status === 404) err += ' (404 — fehlt der Ordner daten/ im Dashboard-Ordner?)';
-      else if (status === 503) err += ' (503 — Dienst nicht verfügbar)';
-      else if (e && e.message) err += ': ' + e.message;
-      return { ok: false, error: err };
+      if (status === 404) {
+        // Neuanlage über Upload-Endpoint.
+        try {
+          const fd = new FormData();
+          fd.append('session_id', sid);
+          fd.append('path', (folder ? folder + '/' : '') + 'daten');
+          fd.append('file', new File([content], file, { type: 'application/json' }));
+          // headers: {} ist PFLICHT — der Browser setzt die multipart-Boundary
+          // selbst; ein Content-Type-Header würde den Upload zerstören.
+          const up = await callApi('/api/workspace/upload', { method: 'POST', body: fd, headers: {} });
+          if (up && up.error) {
+            return { ok: false, error: 'Speichern fehlgeschlagen (Upload): ' + up.error };
+          }
+        } catch (e2) {
+          let err = 'Speichern fehlgeschlagen (Neuanlage via Upload)';
+          if (e2 && e2.status === 404) err += ' — fehlt der Ordner daten/ im Dashboard-Ordner?';
+          else if (e2 && e2.message) err += ': ' + e2.message;
+          return { ok: false, error: err };
+        }
+      } else {
+        let err = 'Speichern fehlgeschlagen';
+        if (status === 503) err += ' (503 — Dienst nicht verfügbar)';
+        else if (e && e.message) err += ': ' + e.message;
+        return { ok: false, error: err };
+      }
     }
 
     // Frische Daten für Live-Update im Dashboard (weicher Fehler → rows: null).

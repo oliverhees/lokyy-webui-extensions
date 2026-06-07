@@ -4,7 +4,7 @@ task: Dashboard Write-Back — Formulare schreiben Daten zurück in den Workspac
 slug: dashboard-write-back
 effort: E3
 phase: complete
-progress: 38/38
+progress: 39/39
 mode: build
 started: 2026-06-07T00:00:00Z
 updated: 2026-06-07T00:00:00Z
@@ -50,7 +50,7 @@ Die loki-dashboards-Extension besitzt eine sichere postMessage→`/api/file/save
 - [x] ISC-9: Nicht-Objekt-Payloads (String, Array, null) werden mit Fehler-Result abgelehnt
 - [x] ISC-10: Payload-Größe > 256 KB wird mit Fehler-Result abgelehnt
 - [x] ISC-11: Fehlendes `date`-Feld wird vom Parent mit dem heutigen Datum (YYYY-MM-DD) ergänzt
-- [x] ISC-12: Schreiben erfolgt via `callApi('/api/file/save', POST, {session_id, path, content})`
+- [x] ISC-12: Schreiben erfolgt via `POST /api/file/save`; bei 404 (Datei neu) Fallback `POST /api/workspace/upload` multipart (refined 2026-06-07)
 - [x] ISC-13: Erfolgs-Result `{type:'loki:save:result', reqId, ok:true, rows}` enthält frisch geladene Daten
 - [x] ISC-14: Fehler-Result `{ok:false, error}` wird ans iframe zurückgepostet (inkl. Hinweis auf evtl. fehlenden `daten/`-Ordner)
 - [x] ISC-15: `reqId` aus der Anfrage wird im Result unverändert zurückgegeben (Promise-Zuordnung im iframe)
@@ -85,6 +85,7 @@ Die loki-dashboards-Extension besitzt eine sichere postMessage→`/api/file/save
 - [x] ISC-36: Injizierter Helper unterbindet native Form-Submissions global (capture-phase `submit` → `preventDefault`), Dashboard-eigene Handler feuern weiter
 - [x] ISC-37: Builder-Skill verbietet native Submission + `form.submit()` + `autofocus` explizit und schreibt `ev.preventDefault()` als erste Handler-Zeile vor
 - [x] ISC-38: Live-Experiment belegt: mit `allow-forms` feuert das submit-Event im sandboxed srcdoc-iframe und `preventDefault` greift (ohne: Event feuert nie)
+- [x] ISC-39: Live verifiziert (v0.51.210): file/save überschreibt nur Bestehendes (404 bei neu); workspace/upload legt neue Datei an (200, Datei im Listing)
 
 ## Test Strategy
 
@@ -121,6 +122,11 @@ Die loki-dashboards-Extension besitzt eine sichere postMessage→`/api/file/save
 - 2026-06-07: refined: ISC-17 von `allow-scripts` auf `allow-scripts allow-forms` — Live-Experiment im echten Chrome bewies: ohne allow-forms dispatcht Chromium das submit-Event NICHT (Block vor Event-Dispatch), Write-Back via submit-Handler ist damit strukturell unmöglich. Sicherheitsnetz von document- auf window-capture verlegt (als erster registrierter Listener canceled es jede native Submission vor fremdem Code). Kein neuer Exfil-Kanal: fetch/img-Beacons sind aus dem opaken Origin ohnehin möglich.
 
 ## Changelog
+
+- conjectured: POST /api/file/save legt Dateien auch NEU an — der master-Branch-Code und die Editor-Nutzung der Host-UI decken den Create-Fall mit ab.
+  refuted by: Live-Probe 2026-06-07 gegen v0.51.210 — Überschreiben einer bestehenden Datei: 200; Neuanlage: 404 {"error":"File not found"}. Die Host-UI legt neue Dateien über POST /api/workspace/upload (multipart) an.
+  learned: Einen Endpoint gegen den master zu verifizieren reicht nicht — die DEPLOYTE Version ist der Vertrag. Schreibpfade immer für beide Fälle (create + update) gegen die Live-Instanz proben.
+  criterion now: ISC-12 (save mit 404-Fallback auf workspace/upload) + ISC-39 (beide Fälle live geprobt).
 
 - conjectured: Ein globaler capture-phase preventDefault-Listener fängt jede native Form-Submission im sandboxed iframe ab — allow-forms wird nicht gebraucht.
   refuted by: Live-Experiment 2026-06-07 in Olivers Chrome — in sandbox="allow-scripts" feuert das submit-Event NIE (Chromium blockt VOR dem Event-Dispatch); mit allow-forms feuert es und preventDefault greift. Der Block-Fehler trat trotz korrektem Dashboard-Code und Sicherheitsnetz weiter auf.
