@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lokyy OS — Hub-Architektur</title>
+<style>
+  :root{
+    --bg:#0b0d16; --panel:#14161f; --panel2:#1a1d28; --border:#2a2d3a;
+    --text:#e8e8ee; --muted:#9aa0b4; --accent:#F97316; --accent-soft:rgba(249,115,22,.14);
+    --green:#22c55e; --yellow:#eab308; --red:#ef4444; --blue:#3b82f6;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:28px}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:24px}
+  .layer{margin:0 auto 14px;max-width:1100px}
+  .layer-label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 0 8px}
+  .row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+  .box{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px 18px;min-width:180px;flex:1}
+  .box.hub{border-top:3px solid var(--accent);background:var(--panel2);max-width:1100px;flex-basis:100%}
+  .box.brain{border-top:3px solid var(--blue)}
+  .box.cloud{border-top:3px solid var(--green)}
+  .box.crm{border-top:3px solid var(--yellow)}
+  .box .t{font-weight:800;font-size:15px;margin-bottom:2px}
+  .box .tag{font-size:11px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+  .box ul{margin:8px 0 0;padding-left:16px;color:var(--muted);font-size:12px}
+  .box ul li{margin:2px 0}
+  .arrow{text-align:center;color:var(--muted);font-size:20px;margin:2px 0}
+  .mcp{display:inline-block;background:var(--accent-soft);color:var(--accent);font-size:10px;font-weight:700;padding:1px 7px;border-radius:6px;margin-top:8px}
+  .legend{max-width:1100px;margin:24px auto 0;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 18px;font-size:12px;color:var(--muted)}
+  .legend b{color:var(--text)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin:0 4px 0 10px;vertical-align:middle}
+  .ref{max-width:1100px;margin:14px auto 0;border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:8px;padding:12px 16px;font-size:12.5px;line-height:1.6}
+</style>
+</head>
+<body>
+  <h1>Lokyy OS — Hub-Architektur</h1>
+  <div class="sub">Ein Betriebssystem, das Dienste föderiert. Trennung nach Datentyp · Verbindung über Referenzen · alles remote, von jeder KI nutzbar.</div>
+
+  <div class="layer">
+    <div class="layer-label">Zugriff — von überall, jede KI</div>
+    <div class="row">
+      <div class="box"><div class="t">🌐 Browser</div></div>
+      <div class="box"><div class="t">🤖 Claude / andere Agents</div></div>
+      <div class="box"><div class="t">📱 Mobile / PWA</div></div>
+    </div>
+  </div>
+  <div class="arrow">▼ &nbsp; Login + 2FA (Caddy / Authelia) &nbsp; ▼</div>
+
+  <div class="layer">
+    <div class="layer-label">Hub — der Einstieg in alles</div>
+    <div class="row">
+      <div class="box hub">
+        <span class="tag">Lokyy OS = Hermes WebUI</span>
+        <div class="t" style="margin-top:4px">Die zentrale Oberfläche — man geht IMMER hier rein</div>
+        <ul>
+          <li>💬 Chat / Agent — spricht mit <b>jedem</b> MCP</li>
+          <li>📊 Dashboards — verlinken & einbetten (z.B. „öffne Nextcloud", „öffne CRM")</li>
+          <li>🗂️ Spaces — Workspaces als Repo-Clones (privat + gemeinsam)</li>
+          <li>🔎 Datei-Browser — durchsucht auch abgebildete Nextcloud-Verzeichnisse</li>
+          <li>🔗 Datei-Referenz — Datei anklicken → Public-URL → im Chat nutzen</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="arrow">▼ &nbsp; spricht via MCP / verlinkt &nbsp; ▼</div>
+
+  <div class="layer">
+    <div class="layer-label">Föderierte Dienste — jeder mit eigenem MCP, alle remote</div>
+    <div class="row">
+      <div class="box brain">
+        <span class="tag" style="color:var(--blue)">Text / Wissen</span>
+        <div class="t">🧠 Lokyy Brain</div>
+        <ul>
+          <li>Forgejo — git-versioniert</li>
+          <li>Markdown: Notizen, Specs, Entscheidungen</li>
+          <li>privat-Repo (pro User) + shared-Repo</li>
+          <li>leicht, diffbar, 🔴🟡🟢-Sync</li>
+        </ul>
+        <span class="mcp">MCP</span>
+      </div>
+      <div class="box cloud">
+        <span class="tag" style="color:var(--green)">Binärdaten</span>
+        <div class="t">☁️ Nextcloud</div>
+        <ul>
+          <li>Bilder, Videos, Dokumente</li>
+          <li>NICHT in git — Blobs</li>
+          <li>Public / Share-URLs</li>
+          <li>UI zum Zusammenklicken</li>
+        </ul>
+        <span class="mcp">MCP</span>
+      </div>
+      <div class="box crm">
+        <span class="tag" style="color:var(--yellow)">Business</span>
+        <div class="t">📇 CRM</div>
+        <ul>
+          <li>Kontakte, Deals, Pipeline</li>
+          <li>aus Lokyy OS öffnen & abfragen</li>
+        </ul>
+        <span class="mcp">MCP</span>
+      </div>
+      <div class="box">
+        <span class="tag" style="color:var(--muted)">erweiterbar</span>
+        <div class="t">➕ weitere MCPs</div>
+        <ul>
+          <li>Kalender, Mail, Tools …</li>
+          <li>einfach andocken</li>
+        </ul>
+        <span class="mcp">MCP</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="ref">
+    <b>Der Schlüssel-Workflow:</b> In Nextcloud Dateien zusammenklicken → Public-URLs → an Lokyy OS senden →
+    im Chat sofort referenzierbar. Binärdaten werden <b>nie kopiert</b>, nur <b>per URL referenziert</b>.
+    Eine Markdown-Notiz im Brain verlinkt das Bild in Nextcloud → git bleibt leicht, die KI arbeitet trotzdem damit.
+  </div>
+
+  <div class="legend">
+    <b>Prinzipien:</b>
+    &nbsp;1) <b>Datentyp trennen</b> — Text→Forgejo, Binär→Nextcloud.
+    &nbsp;2) <b>Referenzieren statt kopieren</b> — Public-URLs verbinden die Welten.
+    &nbsp;3) <b>Lokyy OS föderiert</b> — speichert selbst nichts Schweres, orchestriert die MCPs.
+    &nbsp;4) <b>Alles remote</b> — von überall, jede KI.
+    <br><br>
+    <b>Sync-Status (Brain):</b>
+    <span class="dot" style="background:var(--red)"></span>nur privat
+    <span class="dot" style="background:var(--green)"></span>freigegeben & synchron
+    <span class="dot" style="background:var(--yellow)"></span>freigegeben, Differenz
+  </div>
+</body>
+</html>

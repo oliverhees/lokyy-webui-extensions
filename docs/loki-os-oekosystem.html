@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lokyy OS — Das KI-Betriebssystem · Ökosystem</title>
+<style>
+  :root{
+    --bg:#0a0c14; --panel:#141722; --panel2:#1b1f2c; --border:#2b2f3e;
+    --text:#eef0f6; --muted:#9aa0b4;
+    --orange:#F97316; --orange-soft:rgba(249,115,22,.13);
+    --blue:#3b82f6; --blue-soft:rgba(59,130,246,.13);
+    --green:#22c55e; --green-soft:rgba(34,197,94,.13);
+    --yellow:#eab308; --yellow-soft:rgba(234,179,8,.13);
+    --violet:#a855f7; --violet-soft:rgba(168,85,247,.13);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 50% -10%, #161a28 0%, var(--bg) 60%);color:var(--text);
+       font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:32px 24px 40px}
+  .head{text-align:center;max-width:1160px;margin:0 auto 26px}
+  .head h1{font-size:26px;margin:0 0 6px;letter-spacing:.2px}
+  .head h1 b{color:var(--orange)}
+  .head p{color:var(--muted);font-size:13.5px;margin:0}
+  .canvas{max-width:1160px;margin:0 auto}
+
+  .tier-label{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:11px;
+       text-transform:uppercase;letter-spacing:.1em;margin:22px 4px 10px}
+  .tier-label::before,.tier-label::after{content:"";height:1px;background:var(--border);flex:0 0 16px}
+  .tier-label::after{flex:1}
+
+  .row{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:15px 17px;flex:1;min-width:150px;position:relative}
+  .card .ico{font-size:20px}
+  .card .name{font-weight:800;font-size:15px;margin:4px 0 1px}
+  .card .role{font-size:11px;color:var(--muted)}
+  .card ul{margin:9px 0 0;padding-left:15px;color:var(--muted);font-size:11.5px}
+  .card ul li{margin:2px 0}
+  .badges{margin-top:10px;display:flex;gap:5px;flex-wrap:wrap}
+  .b{font-size:9.5px;font-weight:800;padding:2px 7px;border-radius:20px;letter-spacing:.03em}
+  .b-mcp{background:var(--orange-soft);color:var(--orange);border:1px solid var(--orange)}
+  .b-pwa{background:var(--green-soft);color:var(--green);border:1px solid var(--green)}
+  .b-git{background:var(--blue-soft);color:var(--blue);border:1px solid var(--blue)}
+  .b-url{background:var(--yellow-soft);color:var(--yellow);border:1px solid var(--yellow)}
+
+  .hub{border-width:2px}
+  .hub-loki{border-color:var(--orange);background:linear-gradient(180deg,var(--orange-soft),var(--panel))}
+  .hub-brain{border-color:var(--violet);background:linear-gradient(180deg,var(--violet-soft),var(--panel))}
+
+  .flow{text-align:center;color:var(--muted);font-size:12px;margin:12px 0;display:flex;align-items:center;justify-content:center;gap:8px}
+  .flow .pill{background:var(--panel2);border:1px solid var(--border);border-radius:20px;padding:3px 11px;font-size:10.5px;font-weight:700}
+
+  .server{border:1.5px dashed var(--border);border-radius:20px;padding:10px 16px 18px;margin-top:8px;position:relative}
+  .server-tag{position:absolute;top:-11px;left:18px;background:var(--bg);padding:0 10px;color:var(--muted);font-size:11px;font-weight:700;letter-spacing:.05em}
+  .gate{text-align:center;margin:4px auto 14px;background:var(--orange-soft);border:1px solid var(--orange);color:var(--orange);
+        font-weight:700;font-size:12px;border-radius:12px;padding:8px 14px;max-width:560px}
+
+  .legend{max-width:1160px;margin:22px auto 0;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px 18px}
+  .legend .lt{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin-bottom:9px}
+  .legend .items{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+  .legend .items b{color:var(--text)}
+  .conn{display:inline-flex;align-items:center;gap:6px}
+  .swatch{width:22px;height:0;border-top:3px solid;border-radius:2px}
+  .foot{max-width:1160px;margin:14px auto 0;color:var(--muted);font-size:11.5px;text-align:center}
+</style>
+</head>
+<body>
+  <div class="head">
+    <h1>🔱 <b>Lokyy OS</b> — das KI-Betriebssystem</h1>
+    <p>Eine föderierte KI-Infrastruktur: ein zentraler Hub, mehrere remote Dienste, verbunden über MCPs — von überall und mit jeder KI nutzbar.</p>
+  </div>
+
+  <div class="canvas">
+
+    <!-- CLIENTS -->
+    <div class="tier-label">Zugriff · von überall</div>
+    <div class="row">
+      <div class="card"><div class="ico">🌐</div><div class="name">Browser</div><div class="role">Desktop · jederzeit</div></div>
+      <div class="card"><div class="ico">📱</div><div class="name">Mobile / PWA</div><div class="role">App-Erlebnis ohne Store</div></div>
+      <div class="card"><div class="ico">🤖</div><div class="name">Andere KIs</div><div class="role">Claude &amp; Co. — direkter MCP-Zugang</div></div>
+    </div>
+
+    <div class="flow">
+      <span class="pill" style="color:var(--orange)">▼ Login + 2FA</span>
+    </div>
+
+    <!-- SERVER FRAME -->
+    <div class="server">
+      <span class="server-tag">☁️ REMOTE SERVER · Coolify · alles gehostet, immer erreichbar</span>
+      <div class="gate">🔒 Caddy + Authelia — Benutzername · Passwort · 2-Faktor · pro-User-Berechtigungen</div>
+
+      <!-- TWO ENTRY HUBS -->
+      <div class="tier-label">Zwei gleichberechtigte Einstiegssysteme</div>
+      <div class="row">
+        <div class="card hub hub-loki" style="max-width:540px">
+          <div class="ico">🔱</div>
+          <div class="name">Lokyy OS <span style="color:var(--muted);font-weight:600;font-size:12px">(Hermes WebUI)</span></div>
+          <div class="role">Der Agent-Hub — Einstieg in alles</div>
+          <ul>
+            <li>💬 Chat / Agent — spricht mit <b>jedem</b> MCP</li>
+            <li>📊 Dashboards · 🗂️ Spaces (Workspaces) · 🔎 Datei-Browser</li>
+            <li>🔔 Notification-Center · ⏰ geplante Tasks</li>
+          </ul>
+          <div class="badges"><span class="b b-pwa">PWA</span><span class="b b-mcp">spricht MCP →</span></div>
+        </div>
+        <div class="card hub hub-brain" style="max-width:540px">
+          <div class="ico">🧠</div>
+          <div class="name">Lokyy Brain <span style="color:var(--muted);font-weight:600;font-size:12px">(Second Brain)</span></div>
+          <div class="role">Wissens-/Datenschicht — auch standalone</div>
+          <ul>
+            <li>📚 Markdown-Vault · Specs · Entscheidungen</li>
+            <li>🔁 Pipes (z.B. Video-Transkripte, automatisch)</li>
+            <li>🤖 Andere KIs greifen <b>direkt</b> zu (eigener MCP)</li>
+          </ul>
+          <div class="badges"><span class="b b-pwa">PWA</span><span class="b b-mcp">MCP</span><span class="b b-git">git</span></div>
+        </div>
+      </div>
+
+      <div class="flow">
+        <span class="pill" style="color:var(--orange)">MCP</span>
+        <span>Lokyy OS ⇄ Lokyy Brain &nbsp;·&nbsp; „immer erst das Brain fragen"</span>
+        <span class="pill" style="color:var(--blue)">git</span>
+        <span>Brain ⇄ Forgejo (versioniert)</span>
+      </div>
+
+      <!-- SERVICES -->
+      <div class="tier-label">Föderierte Dienste · jeder mit eigenem MCP · privat + gemeinsam</div>
+      <div class="row">
+        <div class="card" style="border-top:3px solid var(--blue)">
+          <div class="ico">🗄️</div><div class="name">Forgejo</div><div class="role">Text / Wissen — versioniert</div>
+          <ul><li>privat-Repo (pro User)</li><li>shared-Repo (Team)</li><li>🔴🟡🟢 Sync-Status</li></ul>
+          <div class="badges"><span class="b b-git">git</span></div>
+        </div>
+        <div class="card" style="border-top:3px solid var(--green)">
+          <div class="ico">☁️</div><div class="name">Nextcloud</div><div class="role">Binär — Objektspeicher PLUS</div>
+          <ul><li>Bilder · Video · Dokumente</li><li>privat + shared Bereich</li><li>Kalender · Kontakte</li></ul>
+          <div class="badges"><span class="b b-mcp">MCP</span><span class="b b-url">Public-URL</span></div>
+        </div>
+        <div class="card" style="border-top:3px solid var(--yellow)">
+          <div class="ico">📇</div><div class="name">CRM</div><div class="role">Business-Daten</div>
+          <ul><li>Kontakte · Deals · Pipeline</li><li>aus Lokyy OS öffnen &amp; abfragen</li></ul>
+          <div class="badges"><span class="b b-mcp">MCP</span></div>
+        </div>
+        <div class="card" style="border-top:3px solid var(--violet)">
+          <div class="ico">➕</div><div class="name">Weitere MCPs</div><div class="role">beliebig erweiterbar</div>
+          <ul><li>Mail · Kalender · Tools</li><li>einfach andocken</li></ul>
+          <div class="badges"><span class="b b-mcp">MCP</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LEGEND -->
+  <div class="legend">
+    <div class="lt">Verbindungstypen — was wie angebunden ist</div>
+    <div class="items">
+      <span class="conn"><span class="swatch" style="border-color:var(--orange)"></span><b>MCP</b> — KI-Tool-Anbindung (Agent steuert Dienst)</span>
+      <span class="conn"><span class="swatch" style="border-color:var(--blue)"></span><b>git</b> — versionierte Daten (Forgejo)</span>
+      <span class="conn"><span class="swatch" style="border-color:var(--green)"></span><b>PWA</b> — App-Zugang ohne Store</span>
+      <span class="conn"><span class="swatch" style="border-color:var(--yellow)"></span><b>Public-URL</b> — Binärdaten referenzierbar</span>
+    </div>
+  </div>
+
+  <div class="foot">
+    Prinzipien: <b>Datentyp trennen</b> (Text→Forgejo, Binär→Nextcloud) · <b>referenzieren statt kopieren</b> · <b>Lokyy OS föderiert</b> (orchestriert, speichert nichts Schweres) · <b>alles remote &amp; zugriffsgeschützt</b>.
+    &nbsp;— 5 Mitarbeiter, je eigenes Lokyy OS, eine gemeinsame Wissensbasis, wenn gewollt.
+  </div>
+</body>
+</html>
